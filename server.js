@@ -112,7 +112,7 @@ app.get("/stream/:type/:id.json", async (req, res) => {
     console.error(error);
 
     res.json({
-      streams: []
+      streams: [],
       error: error.message
     });
   }
