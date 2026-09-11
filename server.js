@@ -91,7 +91,7 @@ app.get("/stream/:type/:id.json", async (req, res) => {
     }
 
     const pageUrl =
-      `https://www.mxplayer.in/detail/episode/${episodeId}`;
+  "https://www.mxplayer.in/show/watch-yeh-meri-family/season-2/apna-kamra-online-a2c9ed2742914673e2f83d8ec6b863b8";
 
     const video = await extractMxPlayer(pageUrl);
 
