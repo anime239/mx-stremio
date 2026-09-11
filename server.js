@@ -4,9 +4,9 @@ const crypto = require("crypto");
 const app = express();
 const PORT = process.env.PORT || 7000;
 
-// --------------------------------------------------
+// ==================================================
 // STREMIO MANIFEST
-// --------------------------------------------------
+// ==================================================
 
 const manifest = {
   id: "com.my.stremio.video",
@@ -22,80 +22,37 @@ app.get("/manifest.json", (req, res) => {
   res.json(manifest);
 });
 
-// --------------------------------------------------
-// FIND MX HLS STREAM
-// --------------------------------------------------
+// ==================================================
+// MX PLAYER API REQUEST
+// ==================================================
 
-function findHls(stream) {
-  if (!stream || typeof stream !== "object") {
-    return null;
-  }
-
-  const hlsData = stream.hls || {};
-  const thirdParty = stream.thirdParty || {};
-  const altBalaji = stream.altBalaji || {};
-  const mxplay = stream.mxplay || {};
-  const mxplayHls = mxplay.hls || {};
-
-  let hls =
-    hlsData.high ||
-    hlsData.base ||
-    hlsData.main ||
-    thirdParty.hlsUrl ||
-    altBalaji.hlsUrl ||
-    mxplayHls.high;
-
-  if (!hls) {
-    return null;
-  }
-
-  // MX sometimes returns a relative CloudFront path
-  if (!hls.startsWith("http")) {
-    hls =
-      `https://d3sgzbosmwirao.cloudfront.net/${hls}`;
-  }
-
-  return hls;
-}
-
-// --------------------------------------------------
-// MX PLAYER DETAIL API
-// --------------------------------------------------
-
-async function getMxEpisode(episodeId) {
-
-  // Keep one anonymous UUID for this request
+async function requestMxEpisode() {
   const userId = crypto.randomUUID();
 
   const params = new URLSearchParams({
     type: "episode",
-    id: episodeId,
-
+    id: "a2c9ed2742914673e2f83d8ec6b863b8",
     "device-density": "2",
-
     platform: "com.mxplay.desktop",
-
     "content-languages": "hi,en",
-
     "kids-mode-enabled": "false",
-
     userid: userId
   });
 
-  const apiUrl =
+  const url =
     `https://api.mxplayer.in/v1/web/detail/video?${params}`;
 
   console.log("=================================");
-  console.log("MX API REQUEST");
-  console.log(apiUrl);
+  console.log("MX API URL");
+  console.log(url);
   console.log("=================================");
 
-  const response = await fetch(apiUrl, {
+  const response = await fetch(url, {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
         "AppleWebKit/537.36 (KHTML, like Gecko) " +
-        "Chrome/125.0.0.0 Safari/537.36",
+        "Chrome/140.0.0.0 Safari/537.36",
 
       "Accept":
         "application/json, text/plain, */*",
@@ -131,103 +88,132 @@ async function getMxEpisode(episodeId) {
     );
   }
 
-  console.log(
-    "MX title:",
-    data.title || "unknown"
-  );
-
-  // ------------------------------------------------
-  // STREAM OBJECT
-  // ------------------------------------------------
-
-  const stream =
-    data.stream ||
-    data.data?.stream ||
-    {};
-
-  console.log(
-    "Stream object found:",
-    !!data.stream
-  );
-
-  console.log(
-    "Stream keys:",
-    Object.keys(stream)
-  );
-
-  if (stream.hls) {
-    console.log(
-      "HLS keys:",
-      Object.keys(stream.hls)
-    );
-  }
-
-  if (stream.thirdParty) {
-    console.log(
-      "thirdParty keys:",
-      Object.keys(stream.thirdParty)
-    );
-  }
-
-  if (stream.mxplay) {
-    console.log(
-      "mxplay keys:",
-      Object.keys(stream.mxplay)
-    );
-  }
-
-  // ------------------------------------------------
-  // FIND HLS
-  // ------------------------------------------------
-
-  const hls = findHls(stream);
-
-  if (!hls) {
-
-    const drmProtect =
-      stream.drmProtect;
-
-    console.log(
-      "DRM protected:",
-      drmProtect
-    );
-
-    throw new Error(
-      `MX API returned no HLS stream` +
-      (drmProtect
-        ? " (stream is marked DRM protected)"
-        : "")
-    );
-  }
-
-  console.log(
-    "HLS FOUND:",
-    hls
-  );
-
-  return {
-    title:
-      data.title ||
-      "MX Player",
-
-    description:
-      data.description ||
-      "",
-
-    thumbnail:
-      data.imageInfo?.find(
-        x => x?.type === "landscape"
-      )?.url ||
-      data.imageInfo?.[0]?.url ||
-      null,
-
-    url: hls
-  };
+  return data;
 }
 
-// --------------------------------------------------
+// ==================================================
+// DEBUG MX RESPONSE
+// ==================================================
+
+app.get("/debug-mx", async (req, res) => {
+  try {
+    const data = await requestMxEpisode();
+
+    const stream =
+      data.stream || null;
+
+    const dataStream =
+      data.data?.stream || null;
+
+    res.json({
+      success: true,
+
+      topLevelKeys:
+        Object.keys(data),
+
+      dataKeys:
+        data.data &&
+        typeof data.data === "object"
+          ? Object.keys(data.data)
+          : null,
+
+      title:
+        data.title ||
+        data.data?.title ||
+        null,
+
+      streamExists:
+        !!stream,
+
+      streamKeys:
+        stream &&
+        typeof stream === "object"
+          ? Object.keys(stream)
+          : null,
+
+      dataStreamExists:
+        !!dataStream,
+
+      dataStreamKeys:
+        dataStream &&
+        typeof dataStream === "object"
+          ? Object.keys(dataStream)
+          : null,
+
+      streamHls:
+        stream?.hls || null,
+
+      dataStreamHls:
+        dataStream?.hls || null,
+
+      streamThirdParty:
+        stream?.thirdParty || null,
+
+      dataStreamThirdParty:
+        dataStream?.thirdParty || null,
+
+      streamMxplay:
+        stream?.mxplay || null,
+
+      dataStreamMxplay:
+        dataStream?.mxplay || null
+    });
+
+  } catch (error) {
+
+    console.error(
+      "DEBUG ERROR:",
+      error
+    );
+
+    res.json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==================================================
+// FIND HLS
+// ==================================================
+
+function findHls(data) {
+
+  const possibleStreams = [
+    data?.stream,
+    data?.data?.stream,
+    data?.video?.stream,
+    data?.data?.video?.stream
+  ];
+
+  for (const stream of possibleStreams) {
+
+    if (!stream) {
+      continue;
+    }
+
+    const hls =
+      stream?.hls?.high ||
+      stream?.hls?.medium ||
+      stream?.hls?.low ||
+      stream?.hls?.base ||
+      stream?.hls?.main ||
+      stream?.thirdParty?.hlsUrl ||
+      stream?.thirdParty?.hls ||
+      stream?.altBalaji?.hlsUrl ||
+      stream?.mxplay?.hls?.high;
+
+    if (hls) {
+      return hls;
+    }
+  }
+
+  return null;
+}
+
+// ==================================================
 // STREMIO STREAM ENDPOINT
-// --------------------------------------------------
+// ==================================================
 
 app.get(
   "/stream/:type/:id.json",
@@ -236,22 +222,51 @@ app.get(
     try {
 
       console.log(
-        "Stremio request:",
+        "================================="
+      );
+
+      console.log(
+        "STREMIO REQUEST"
+      );
+
+      console.log(
         req.params
       );
 
-      // Known MX Player episode:
-      //
-      // Yeh Meri Family
-      // Season 2
-      // Episode 1
-      // Apna Kamra
-
+      // Known MX Player episode ID
       const episodeId =
         "a2c9ed2742914673e2f83d8ec6b863b8";
 
-      const video =
-        await getMxEpisode(episodeId);
+      const data =
+        await requestMxEpisode();
+
+      const hls =
+        findHls(data);
+
+      if (!hls) {
+
+        console.log(
+          "NO HLS FOUND"
+        );
+
+        console.log(
+          JSON.stringify(data)
+        );
+
+        throw new Error(
+          "MX API returned no HLS stream"
+        );
+      }
+
+      console.log(
+        "HLS FOUND:"
+      );
+
+      console.log(hls);
+
+      // ------------------------------------------------
+      // Return stream to Stremio
+      // ------------------------------------------------
 
       res.json({
         streams: [
@@ -259,17 +274,14 @@ app.get(
             name: "MX Player",
 
             title:
-              video.title,
+              data.title ||
+              data.data?.title ||
+              "MX Player",
 
-            url:
-              video.url,
-
-            thumbnail:
-              video.thumbnail || undefined,
+            url: hls,
 
             behaviorHints: {
-              bingeGroup:
-                "mxplayer"
+              bingeGroup: "mxplayer"
             }
           }
         ]
@@ -278,16 +290,8 @@ app.get(
     } catch (error) {
 
       console.error(
-        "================================="
-      );
-
-      console.error(
         "STREAM ERROR:",
         error.message
-      );
-
-      console.error(
-        "================================="
       );
 
       res.json({
@@ -298,9 +302,9 @@ app.get(
   }
 );
 
-// --------------------------------------------------
+// ==================================================
 // ROOT
-// --------------------------------------------------
+// ==================================================
 
 app.get("/", (req, res) => {
   res.send(
@@ -308,9 +312,9 @@ app.get("/", (req, res) => {
   );
 });
 
-// --------------------------------------------------
+// ==================================================
 // START SERVER
-// --------------------------------------------------
+// ==================================================
 
 app.listen(
   PORT,
