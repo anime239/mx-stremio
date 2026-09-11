@@ -23,34 +23,79 @@ app.get("/manifest.json", (req, res) => {
 });
 
 // --------------------------------------------------
-// MX PLAYER EPISODE API
+// FIND MX HLS STREAM
+// --------------------------------------------------
+
+function findHls(stream) {
+  if (!stream || typeof stream !== "object") {
+    return null;
+  }
+
+  const hlsData = stream.hls || {};
+  const thirdParty = stream.thirdParty || {};
+  const altBalaji = stream.altBalaji || {};
+  const mxplay = stream.mxplay || {};
+  const mxplayHls = mxplay.hls || {};
+
+  let hls =
+    hlsData.high ||
+    hlsData.base ||
+    hlsData.main ||
+    thirdParty.hlsUrl ||
+    altBalaji.hlsUrl ||
+    mxplayHls.high;
+
+  if (!hls) {
+    return null;
+  }
+
+  // MX sometimes returns a relative CloudFront path
+  if (!hls.startsWith("http")) {
+    hls =
+      `https://d3sgzbosmwirao.cloudfront.net/${hls}`;
+  }
+
+  return hls;
+}
+
+// --------------------------------------------------
+// MX PLAYER DETAIL API
 // --------------------------------------------------
 
 async function getMxEpisode(episodeId) {
 
-  // Generate a fresh UUID for this request
+  // Keep one anonymous UUID for this request
   const userId = crypto.randomUUID();
 
   const params = new URLSearchParams({
     type: "episode",
     id: episodeId,
-    platform: "com.mxplay.desktop",
+
     "device-density": "2",
-    userid: userId,
-    "content-languages":
-      "hi,mr,pa,bn,en,ml,kn,gu,te,ta"
+
+    platform: "com.mxplay.desktop",
+
+    "content-languages": "hi,en",
+
+    "kids-mode-enabled": "false",
+
+    userid: userId
   });
 
   const apiUrl =
     `https://api.mxplayer.in/v1/web/detail/video?${params}`;
 
-  console.log("MX API request:");
+  console.log("=================================");
+  console.log("MX API REQUEST");
   console.log(apiUrl);
+  console.log("=================================");
 
   const response = await fetch(apiUrl, {
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/125.0.0.0 Safari/537.36",
 
       "Accept":
         "application/json, text/plain, */*",
@@ -66,7 +111,7 @@ async function getMxEpisode(episodeId) {
   const text = await response.text();
 
   console.log(
-    "MX HTTP status:",
+    "MX HTTP STATUS:",
     response.status
   );
 
@@ -82,46 +127,98 @@ async function getMxEpisode(episodeId) {
     data = JSON.parse(text);
   } catch {
     throw new Error(
-      "MX API did not return valid JSON"
+      "MX API returned invalid JSON"
     );
   }
 
   console.log(
-    "MX API response received"
+    "MX title:",
+    data.title || "unknown"
   );
 
   // ------------------------------------------------
-  // Look for HLS
+  // STREAM OBJECT
   // ------------------------------------------------
 
-  const hls =
-    data?.stream?.hls?.high ||
-    data?.stream?.hls?.medium ||
-    data?.stream?.hls?.low;
+  const stream =
+    data.stream ||
+    data.data?.stream ||
+    {};
+
+  console.log(
+    "Stream object found:",
+    !!data.stream
+  );
+
+  console.log(
+    "Stream keys:",
+    Object.keys(stream)
+  );
+
+  if (stream.hls) {
+    console.log(
+      "HLS keys:",
+      Object.keys(stream.hls)
+    );
+  }
+
+  if (stream.thirdParty) {
+    console.log(
+      "thirdParty keys:",
+      Object.keys(stream.thirdParty)
+    );
+  }
+
+  if (stream.mxplay) {
+    console.log(
+      "mxplay keys:",
+      Object.keys(stream.mxplay)
+    );
+  }
+
+  // ------------------------------------------------
+  // FIND HLS
+  // ------------------------------------------------
+
+  const hls = findHls(stream);
 
   if (!hls) {
 
-    console.log(
-      "No HLS found."
-    );
+    const drmProtect =
+      stream.drmProtect;
 
     console.log(
-      JSON.stringify(data)
+      "DRM protected:",
+      drmProtect
     );
 
     throw new Error(
-      "MX API returned no HLS stream"
+      `MX API returned no HLS stream` +
+      (drmProtect
+        ? " (stream is marked DRM protected)"
+        : "")
     );
   }
+
+  console.log(
+    "HLS FOUND:",
+    hls
+  );
 
   return {
     title:
       data.title ||
       "MX Player",
 
+    description:
+      data.description ||
+      "",
+
     thumbnail:
-      data?.imageInfo?.[1]?.url ||
-      data?.imageInfo?.[0]?.url ||
+      data.imageInfo?.find(
+        x => x?.type === "landscape"
+      )?.url ||
+      data.imageInfo?.[0]?.url ||
       null,
 
     url: hls
@@ -129,7 +226,7 @@ async function getMxEpisode(episodeId) {
 }
 
 // --------------------------------------------------
-// TEST STREAM ENDPOINT
+// STREMIO STREAM ENDPOINT
 // --------------------------------------------------
 
 app.get(
@@ -144,6 +241,7 @@ app.get(
       );
 
       // Known MX Player episode:
+      //
       // Yeh Meri Family
       // Season 2
       // Episode 1
@@ -170,7 +268,8 @@ app.get(
               video.thumbnail || undefined,
 
             behaviorHints: {
-              bingeGroup: "mxplayer"
+              bingeGroup:
+                "mxplayer"
             }
           }
         ]
@@ -179,8 +278,16 @@ app.get(
     } catch (error) {
 
       console.error(
+        "================================="
+      );
+
+      console.error(
         "STREAM ERROR:",
-        error
+        error.message
+      );
+
+      console.error(
+        "================================="
       );
 
       res.json({
@@ -202,7 +309,7 @@ app.get("/", (req, res) => {
 });
 
 // --------------------------------------------------
-// START
+// START SERVER
 // --------------------------------------------------
 
 app.listen(
