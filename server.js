@@ -4,6 +4,10 @@ const crypto = require("crypto");
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// ============================================================
+// CONFIG
+// ============================================================
+
 const MX_API = "https://api.mxplayer.in/v1/web";
 const MX_SEO = "https://seo.mxplayer.in/v1/api/seo";
 const CINEMETA = "https://v3-cinemeta.strem.io/meta";
@@ -12,11 +16,13 @@ const USER_ID = crypto.randomUUID();
 
 const HEADERS = {
   "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-    "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-  "Accept": "application/json, text/plain, */*",
-  "Referer": "https://www.mxplayer.in/",
-  "Origin": "https://www.mxplayer.in"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "Chrome/125.0.0.0 Safari/537.36",
+
+  Accept: "application/json, text/plain, */*",
+  Referer: "https://www.mxplayer.in/",
+  Origin: "https://www.mxplayer.in"
 };
 
 const MX_PARAMS = {
@@ -27,16 +33,10 @@ const MX_PARAMS = {
   userid: USER_ID
 };
 
-/*
- * ============================================================
- * KNOWN WORKING FALLBACK
- * ============================================================
- *
- * This was captured from the MX Player browser network request
- * for Yeh Meri Family S2E1 - Apna Kamra.
- *
- * We use it only for this exact IMDb/season/episode combination.
- */
+
+// ============================================================
+// CONFIRMED FALLBACK
+// ============================================================
 
 const KNOWN_STREAMS = {
   "tt8595766:2:1":
@@ -44,15 +44,18 @@ const KNOWN_STREAMS = {
 };
 
 
-/* ============================================================
-   MANIFEST
-   ============================================================ */
+// ============================================================
+// MANIFEST
+// ============================================================
 
 const manifest = {
   id: "com.my.stremio.video",
-  version: "3.0.0",
+  version: "4.0.0",
+
   name: "MX Player Resolver",
-  description: "MX Player stream resolver",
+
+  description:
+    "Resolves MX Player streams for movies and series episodes.",
 
   resources: [
     {
@@ -68,9 +71,37 @@ const manifest = {
 };
 
 
-/* ============================================================
-   HELPERS
-   ============================================================ */
+// ============================================================
+// BASIC HELPERS
+// ============================================================
+
+function getId(obj) {
+  if (!obj || typeof obj !== "object") {
+    return null;
+  }
+
+  return (
+    obj.id ||
+    obj.contentId ||
+    obj.content_id ||
+    null
+  );
+}
+
+
+function getTitle(obj) {
+  if (!obj || typeof obj !== "object") {
+    return "";
+  }
+
+  return (
+    obj.title ||
+    obj.name ||
+    obj.displayTitle ||
+    ""
+  );
+}
+
 
 function normalizeTitle(value) {
   return String(value || "")
@@ -82,27 +113,14 @@ function normalizeTitle(value) {
     .trim();
 }
 
-function getId(obj) {
-  return (
-    obj?.id ||
-    obj?.contentId ||
-    obj?.content_id ||
-    null
-  );
-}
-
-function getTitle(obj) {
-  return (
-    obj?.title ||
-    obj?.name ||
-    obj?.displayTitle ||
-    ""
-  );
-}
 
 function getNumber(obj, keys) {
+  if (!obj || typeof obj !== "object") {
+    return null;
+  }
+
   for (const key of keys) {
-    const value = obj?.[key];
+    const value = obj[key];
 
     if (
       typeof value === "number" &&
@@ -123,13 +141,269 @@ function getNumber(obj, keys) {
   return null;
 }
 
-function findObjects(root, predicate, limit = 1000) {
-  const result = [];
-  const visited = new Set();
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+
+// ============================================================
+// HTTP HELPERS
+// ============================================================
+
+async function mxGet(path, params = {}) {
+  const url = new URL(
+    MX_API + path
+  );
+
+  const allParams = {
+    ...MX_PARAMS,
+    ...params
+  };
+
+  for (
+    const [key, value]
+    of Object.entries(allParams)
+  ) {
+    if (
+      value !== undefined &&
+      value !== null
+    ) {
+      url.searchParams.set(
+        key,
+        String(value)
+      );
+    }
+  }
+
+  const response = await fetch(
+    url,
+    {
+      method: "GET",
+      headers: HEADERS
+    }
+  );
+
+  const text = await response.text();
+
+  let json;
+
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `MX API invalid JSON (${response.status})`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `MX API HTTP ${response.status}`
+    );
+  }
+
+  return json;
+}
+
+
+async function mxPost(
+  path,
+  params = {},
+  body = {}
+) {
+  const url = new URL(
+    MX_API + path
+  );
+
+  const allParams = {
+    ...MX_PARAMS,
+    ...params
+  };
+
+  for (
+    const [key, value]
+    of Object.entries(allParams)
+  ) {
+    if (
+      value !== undefined &&
+      value !== null
+    ) {
+      url.searchParams.set(
+        key,
+        String(value)
+      );
+    }
+  }
+
+  const response = await fetch(
+    url,
+    {
+      method: "POST",
+
+      headers: {
+        ...HEADERS,
+        "Content-Type":
+          "application/json"
+      },
+
+      body: JSON.stringify(body)
+    }
+  );
+
+  const text = await response.text();
+
+  let json;
+
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `MX API invalid JSON (${response.status})`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `MX API HTTP ${response.status}`
+    );
+  }
+
+  return json;
+}
+
+
+// ============================================================
+// SEO
+// ============================================================
+
+async function mxSEO(path) {
+  const url = new URL(
+    MX_SEO +
+      "/get-url-details"
+  );
+
+  url.searchParams.set(
+    "url",
+    path
+  );
+
+  url.searchParams.set(
+    "device-density",
+    "2"
+  );
+
+  url.searchParams.set(
+    "userid",
+    USER_ID
+  );
+
+  url.searchParams.set(
+    "platform",
+    "com.mxplay.desktop"
+  );
+
+  url.searchParams.set(
+    "content-languages",
+    "hi,en"
+  );
+
+  url.searchParams.set(
+    "kids-mode-enabled",
+    "false"
+  );
+
+  const response = await fetch(
+    url,
+    {
+      headers: {
+        "User-Agent":
+          HEADERS["User-Agent"],
+
+        Accept:
+          "application/json, text/plain, */*",
+
+        Referer:
+          "https://www.mxplayer.in/"
+      }
+    }
+  );
+
+  const text = await response.text();
+
+  let json;
+
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `MX SEO invalid JSON (${response.status})`
+    );
+  }
+
+  return json;
+}
+
+
+// ============================================================
+// CINEMETA
+// ============================================================
+
+async function getCinemeta(
+  type,
+  imdbId
+) {
+  const url =
+    `${CINEMETA}/${type}/${encodeURIComponent(imdbId)}.json`;
+
+  const response = await fetch(
+    url,
+    {
+      headers: {
+        "User-Agent":
+          HEADERS["User-Agent"],
+
+        Accept:
+          "application/json"
+      }
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Cinemeta HTTP ${response.status}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  if (!data?.meta) {
+    throw new Error(
+      "Cinemeta metadata not found"
+    );
+  }
+
+  return data.meta;
+}
+
+
+// ============================================================
+// MX SEARCH
+// ============================================================
+
+async function searchMX(query) {
+  const result =
+    await mxPost(
+      "/search/resultv2",
+      {
+        query
+      },
+      {}
+    );
+
+  const found = [];
 
   function walk(value) {
-    if (result.length >= limit) return;
-
     if (
       value === null ||
       value === undefined ||
@@ -138,264 +412,104 @@ function findObjects(root, predicate, limit = 1000) {
       return;
     }
 
-    if (visited.has(value)) return;
-    visited.add(value);
-
-    if (!Array.isArray(value)) {
-      try {
-        if (predicate(value)) {
-          result.push(value);
-        }
-      } catch {}
-    }
-
     if (Array.isArray(value)) {
       for (const item of value) {
         walk(item);
       }
-    } else {
-      for (const child of Object.values(value)) {
-        walk(child);
-      }
+
+      return;
+    }
+
+    const id = getId(value);
+    const title = getTitle(value);
+
+    if (
+      id &&
+      title &&
+      title.trim()
+    ) {
+      found.push(value);
+    }
+
+    for (
+      const child
+      of Object.values(value)
+    ) {
+      walk(child);
     }
   }
 
-  walk(root);
+  walk(result);
 
-  return result;
-}
+  const unique = [];
+  const seen = new Set();
 
+  for (const item of found) {
+    const id = getId(item);
 
-/* ============================================================
-   HTTP
-   ============================================================ */
-
-async function mxGet(path, params = {}) {
-  const url = new URL(MX_API + path);
-
-  const allParams = {
-    ...MX_PARAMS,
-    ...params
-  };
-
-  for (const [key, value] of Object.entries(allParams)) {
-    if (value !== undefined && value !== null) {
-      url.searchParams.set(key, String(value));
+    if (
+      !id ||
+      seen.has(id)
+    ) {
+      continue;
     }
+
+    seen.add(id);
+    unique.push(item);
   }
 
-  const response = await fetch(url, {
-    headers: HEADERS
-  });
-
-  const text = await response.text();
-
-  let json;
-
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(
-      `MX API returned invalid JSON (${response.status})`
-    );
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      `MX API HTTP ${response.status}`
-    );
-  }
-
-  return json;
-}
-
-async function mxPost(path, params = {}, body = {}) {
-  const url = new URL(MX_API + path);
-
-  const allParams = {
-    ...MX_PARAMS,
-    ...params
-  };
-
-  for (const [key, value] of Object.entries(allParams)) {
-    if (value !== undefined && value !== null) {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      ...HEADERS,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-
-  const text = await response.text();
-
-  let json;
-
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(
-      `MX API returned invalid JSON (${response.status})`
-    );
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      `MX API HTTP ${response.status}`
-    );
-  }
-
-  return json;
-}
-
-async function mxSEO(path) {
-  const url = new URL(
-    MX_SEO + "/get-url-details"
-  );
-
-  url.searchParams.set("url", path);
-  url.searchParams.set(
-    "device-density",
-    "2"
-  );
-  url.searchParams.set(
-    "userid",
-    USER_ID
-  );
-  url.searchParams.set(
-    "platform",
-    "com.mxplay.desktop"
-  );
-  url.searchParams.set(
-    "content-languages",
-    "hi,en"
-  );
-  url.searchParams.set(
-    "kids-mode-enabled",
-    "false"
-  );
-
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": HEADERS["User-Agent"],
-      Accept: "application/json, text/plain, */*",
-      Referer: "https://www.mxplayer.in/"
-    }
-  });
-
-  const text = await response.text();
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(
-      `MX SEO returned invalid JSON (${response.status})`
-    );
-  }
+  return unique;
 }
 
 
-/* ============================================================
-   CINEMETA
-   ============================================================ */
-
-async function getCinemeta(type, imdbId) {
-  const url =
-    `${CINEMETA}/${type}/${encodeURIComponent(imdbId)}.json`;
-
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": HEADERS["User-Agent"],
-      Accept: "application/json"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Cinemeta HTTP ${response.status}`
-    );
-  }
-
-  const data = await response.json();
-
-  if (!data?.meta) {
-    throw new Error(
-      `Cinemeta metadata not found`
-    );
-  }
-
-  return data.meta;
-}
-
-
-/* ============================================================
-   SEARCH MX
-   ============================================================ */
-
-async function searchMX(query) {
-  const result = await mxPost(
-    "/search/resultv2",
-    { query },
-    {}
-  );
-
-  return findObjects(
-    result,
-    obj => {
-      const id = getId(obj);
-      const title = getTitle(obj);
-
-      return (
-        typeof id === "string" &&
-        id.length >= 8 &&
-        typeof title === "string" &&
-        title.trim().length > 0
-      );
-    },
-    500
-  );
-}
-
-
-/* ============================================================
-   FIND SHOW
-   ============================================================ */
+// ============================================================
+// FIND SHOW
+// ============================================================
 
 async function findShow(title) {
-  const wanted = normalizeTitle(title);
+  const wanted =
+    normalizeTitle(title);
 
   const queries = [
     title,
-    `"${title}"`,
-    `${title} series`
+    `${title} series`,
+    `"${title}"`
   ];
 
   let candidates = [];
 
   for (const query of queries) {
     try {
-      const results = await searchMX(query);
+      const results =
+        await searchMX(query);
 
       candidates.push(...results);
 
-      const exact = results.find(item =>
-        normalizeTitle(getTitle(item)) === wanted
-      );
+      const exact =
+        results.find(
+          item =>
+            normalizeTitle(
+              getTitle(item)
+            ) === wanted
+        );
 
       if (exact) {
+        console.log(
+          "MX SHOW:",
+          getTitle(exact),
+          getId(exact)
+        );
+
         return exact;
       }
     } catch (error) {
       console.log(
-        "MX search error:",
+        "Search failed:",
         error.message
       );
     }
+
+    await sleep(100);
   }
 
   const unique = [];
@@ -404,23 +518,38 @@ async function findShow(title) {
   for (const item of candidates) {
     const id = getId(item);
 
-    if (!id || seen.has(id)) continue;
+    if (
+      !id ||
+      seen.has(id)
+    ) {
+      continue;
+    }
 
     seen.add(id);
     unique.push(item);
   }
 
-  const strong = unique.find(item => {
-    const t = normalizeTitle(getTitle(item));
+  const strong =
+    unique.find(item => {
+      const t =
+        normalizeTitle(
+          getTitle(item)
+        );
 
-    return (
-      t === wanted ||
-      t.includes(wanted) ||
-      wanted.includes(t)
-    );
-  });
+      return (
+        t === wanted ||
+        t.includes(wanted) ||
+        wanted.includes(t)
+      );
+    });
 
   if (strong) {
+    console.log(
+      "MX SHOW:",
+      getTitle(strong),
+      getId(strong)
+    );
+
     return strong;
   }
 
@@ -430,12 +559,16 @@ async function findShow(title) {
 }
 
 
-/* ============================================================
-   FIND SEASON
-   ============================================================ */
+// ============================================================
+// FIND SEASON
+// ============================================================
 
-async function findSeason(show, seasonNumber) {
-  const showId = getId(show);
+async function findSeason(
+  show,
+  seasonNumber
+) {
+  const showId =
+    getId(show);
 
   if (!showId) {
     throw new Error(
@@ -444,63 +577,107 @@ async function findSeason(show, seasonNumber) {
   }
 
   /*
-   * Current/older MX clients expose this endpoint.
+   * This endpoint gives the actual season
+   * containers and their sequence numbers.
    */
 
-  for (const type of [
-    "tv_show",
-    "tvshow"
-  ]) {
+  for (
+    const type
+    of ["tv_show", "tvshow"]
+  ) {
     try {
-      const result = await mxGet(
-        "/detail/tab/tvshowseasons",
-        {
-          type,
-          id: showId
+      const result =
+        await mxGet(
+          "/detail/tab/tvshowseasons",
+          {
+            type,
+            id: showId
+          }
+        );
+
+      const seasons = [];
+
+      function walk(value) {
+        if (
+          value === null ||
+          value === undefined ||
+          typeof value !== "object"
+        ) {
+          return;
         }
-      );
 
-      const seasons = findObjects(
-        result,
-        obj => {
-          const id = getId(obj);
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            walk(item);
+          }
 
-          const number = getNumber(obj, [
-            "sequence",
-            "season_number",
-            "seasonNo",
-            "season_no",
-            "seasonNumber"
-          ]);
+          return;
+        }
 
-          return (
-            typeof id === "string" &&
-            number !== null
+        const id =
+          getId(value);
+
+        const number =
+          getNumber(
+            value,
+            [
+              "sequence",
+              "season_number",
+              "seasonNo",
+              "season_no",
+              "seasonNumber"
+            ]
           );
-        }
-      );
 
-      const season = seasons.find(
-        item =>
-          getNumber(item, [
-            "sequence",
-            "season_number",
-            "seasonNo",
-            "season_no",
-            "seasonNumber"
-          ]) === Number(seasonNumber)
-      );
+        if (
+          id &&
+          number !== null
+        ) {
+          seasons.push({
+            ...value,
+            id,
+            seasonNumber:
+              number
+          });
+        }
+
+        for (
+          const child
+          of Object.values(value)
+        ) {
+          walk(child);
+        }
+      }
+
+      walk(result);
+
+      const season =
+        seasons.find(
+          item =>
+            Number(
+              item.seasonNumber
+            ) ===
+            Number(seasonNumber)
+        );
 
       if (season) {
+        console.log(
+          "MX SEASON:",
+          season.id,
+          season.seasonNumber
+        );
+
         return season;
       }
+
     } catch (error) {
       console.log(
-        "Season API failed:",
+        "Season lookup failed:",
         error.message
       );
     }
   }
+
 
   /*
    * SEO fallback.
@@ -513,11 +690,11 @@ async function findSeason(show, seasonNumber) {
 
   if (webUrl) {
     try {
-      const seo = await mxSEO(
-        webUrl
-      );
+      const seo =
+        await mxSEO(webUrl);
 
-      const data = seo?.data;
+      const data =
+        seo?.data;
 
       const dependency =
         data?.dependencies?.season;
@@ -526,13 +703,14 @@ async function findSeason(show, seasonNumber) {
         dependency?.id &&
         Number(
           dependency.season_no
-        ) === Number(seasonNumber)
+        ) ===
+        Number(seasonNumber)
       ) {
         return dependency;
       }
     } catch (error) {
       console.log(
-        "SEO season lookup failed:",
+        "SEO season failed:",
         error.message
       );
     }
@@ -544,207 +722,471 @@ async function findSeason(show, seasonNumber) {
 }
 
 
-/* ============================================================
-   FIND EPISODE
-   ============================================================ */
+// ============================================================
+// GET ALL EPISODES
+// ============================================================
 
-async function findEpisode(
-  season,
-  episodeNumber
+async function getSeasonEpisodes(
+  seasonId
 ) {
-  const seasonId = getId(season);
+  const episodes = [];
 
-  if (!seasonId) {
-    throw new Error(
-      "MX season has no ID"
-    );
-  }
+  let next = null;
 
-  const result =
-    await mxGet(
-      "/detail/tab/tvshowepisodes",
-      {
-        type: "season",
-        id: seasonId,
-        sortOrder: "0"
-      }
-    );
+  /*
+   * IMPORTANT:
+   *
+   * MX paginates episode lists.
+   * We keep requesting every page.
+   */
 
-  const episodes = findObjects(
-    result,
-    obj => {
-      const id = getId(obj);
+  for (
+    let page = 0;
+    page < 50;
+    page++
+  ) {
+    const params = {
+      type: "season",
+      id: seasonId,
+      sortOrder: "0"
+    };
 
-      return (
-        typeof id === "string" &&
-        id.length >= 8
-      );
-    },
-    1000
-  );
+    if (next) {
+      try {
+        const extra =
+          Object.fromEntries(
+            new URLSearchParams(
+              next
+            )
+          );
 
-  const exact = episodes.find(
-    episode => {
-      const number = getNumber(
-        episode,
-        [
-          "sequence",
-          "episode_number",
-          "episodeNo",
-          "episode_no",
-          "episodeNumber"
-        ]
-      );
-
-      return (
-        number ===
-        Number(episodeNumber)
-      );
-    }
-  );
-
-  if (exact) {
-    return exact;
-  }
-
-  const byTitle = episodes.find(
-    episode => {
-      const title =
-        normalizeTitle(
-          getTitle(episode)
+        Object.assign(
+          params,
+          extra
         );
+      } catch {}
+    }
 
-      return (
-        title.includes(
-          `episode ${episodeNumber}`
-        ) ||
-        title.includes(
-          `ep ${episodeNumber}`
-        )
+    const result =
+      await mxGet(
+        "/detail/tab/tvshowepisodes",
+        params
       );
-    }
-  );
 
-  if (byTitle) {
-    return byTitle;
-  }
+    let payload =
+      result?.data ?? result;
 
-  throw new Error(
-    `MX Episode ${episodeNumber} not found`
-  );
-}
+    let items = [];
 
-
-/* ============================================================
-   EPISODE DETAIL
-   ============================================================ */
-
-async function getEpisodeDetail(
-  episodeId
-) {
-  return mxGet(
-    "/detail/video",
-    {
-      type: "episode",
-      id: episodeId
-    }
-  );
-}
-
-
-/* ============================================================
-   EXTRACT HLS
-   ============================================================ */
-
-function extractHLS(root) {
-  const urls = [];
-  const seen = new Set();
-
-  function add(value) {
-    if (
-      typeof value !== "string"
+    if (Array.isArray(payload)) {
+      items = payload;
+    } else if (
+      payload &&
+      Array.isArray(payload.items)
     ) {
-      return;
+      items =
+        payload.items;
     }
 
-    if (
-      !value.includes(".m3u8")
-    ) {
-      return;
-    }
-
-    let url = value;
-
-    if (
-      !url.startsWith("http")
-    ) {
-      url =
-        "https://d3sgzbosmwirao.cloudfront.net/" +
-        url.replace(/^\/+/, "");
-    }
-
-    if (!seen.has(url)) {
-      seen.add(url);
-      urls.push(url);
-    }
-  }
-
-  function walk(value) {
-    if (
-      value === null ||
-      value === undefined
-    ) {
-      return;
-    }
-
-    if (
-      typeof value === "string"
-    ) {
-      add(value);
-      return;
-    }
-
-    if (
-      typeof value !== "object"
-    ) {
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        walk(item);
-      }
-
-      return;
+    if (!items.length) {
+      break;
     }
 
     for (
-      const [key, child]
-      of Object.entries(value)
+      const item
+      of items
     ) {
-      if (
-        typeof child === "string" &&
-        (
-          key.toLowerCase().includes("hls") ||
-          child.includes(".m3u8")
-        )
-      ) {
-        add(child);
-      }
+      episodes.push({
+        id: getId(item),
 
-      walk(child);
+        title:
+          getTitle(item),
+
+        episodeNumber:
+          getNumber(
+            item,
+            [
+              "episodeNo",
+              "episode_number",
+              "episode_no",
+              "episodeNumber",
+              "sequence"
+            ]
+          ),
+
+        duration:
+          item.duration,
+
+        webUrl:
+          item.webUrl ||
+          item.url ||
+          item.web_url ||
+          null,
+
+        /*
+         * THIS IS THE IMPORTANT FIX.
+         *
+         * MX can already provide the stream
+         * directly on the episode object.
+         */
+
+        stream:
+          item.stream ||
+          null,
+
+        raw:
+          item
+      });
     }
+
+    const nextToken =
+      payload &&
+      !Array.isArray(payload)
+        ? payload.next
+        : null;
+
+    if (!nextToken) {
+      break;
+    }
+
+    next =
+      nextToken;
   }
 
-  walk(root);
+  /*
+   * Remove duplicate episode IDs.
+   */
 
-  return urls;
+  const unique = [];
+  const seen = new Set();
+
+  for (
+    const episode
+    of episodes
+  ) {
+    if (
+      !episode.id ||
+      seen.has(episode.id)
+    ) {
+      continue;
+    }
+
+    seen.add(
+      episode.id
+    );
+
+    unique.push(
+      episode
+    );
+  }
+
+  console.log(
+    "EPISODES FOUND:",
+    unique.map(
+      e => ({
+        number:
+          e.episodeNumber,
+
+        title:
+          e.title,
+
+        id:
+          e.id,
+
+        hasStream:
+          !!e.stream,
+
+        hasWebUrl:
+          !!e.webUrl
+      })
+    )
+  );
+
+  return unique;
 }
 
 
-/* ============================================================
-   RESOLVE SERIES
-   ============================================================ */
+// ============================================================
+// STREAM PARSER
+// ============================================================
+
+function parseStream(
+  stream
+) {
+  if (
+    !stream ||
+    typeof stream !== "object"
+  ) {
+    return null;
+  }
+
+  const hls =
+    stream.hls || {};
+
+  const dash =
+    stream.dash || {};
+
+  const thirdParty =
+    stream.thirdParty || {};
+
+  const altBalaji =
+    stream.altBalaji || {};
+
+  const mxplay =
+    stream.mxplay || {};
+
+
+  let hlsUrl =
+    hls.high ||
+    hls.base ||
+    hls.main ||
+    thirdParty.hlsUrl ||
+    altBalaji.hlsUrl ||
+    mxplay?.hls?.high ||
+    null;
+
+
+  let dashUrl =
+    dash.high ||
+    dash.base ||
+    dash.main ||
+    thirdParty.dashUrl ||
+    altBalaji.dashUrl ||
+    mxplay?.dash?.high ||
+    null;
+
+
+  function makeAbsolute(
+    value
+  ) {
+    if (
+      !value ||
+      typeof value !== "string"
+    ) {
+      return null;
+    }
+
+    if (
+      value.startsWith(
+        "http://"
+      ) ||
+      value.startsWith(
+        "https://"
+      )
+    ) {
+      return value;
+    }
+
+    return (
+      "https://d3sgzbosmwirao.cloudfront.net/" +
+      value.replace(
+        /^\/+/,
+        ""
+      )
+    );
+  }
+
+
+  hlsUrl =
+    makeAbsolute(
+      hlsUrl
+    );
+
+  dashUrl =
+    makeAbsolute(
+      dashUrl
+    );
+
+
+  if (
+    !hlsUrl &&
+    !dashUrl
+  ) {
+    return null;
+  }
+
+
+  return {
+    hls:
+      hlsUrl,
+
+    dash:
+      dashUrl,
+
+    videoHash:
+      stream.videoHash ||
+      null,
+
+    drmProtect:
+      stream.drmProtect ||
+      false,
+
+    provider:
+      stream.provider ||
+      "mxplay"
+  };
+}
+
+
+// ============================================================
+// RESOLVE EPISODE STREAM
+// ============================================================
+
+async function resolveEpisodeStream(
+  episode
+) {
+  /*
+   * ==========================================================
+   * METHOD 1 — STREAM ALREADY PRESENT
+   * ==========================================================
+   *
+   * This is the key fix for S2E2, S2E3, etc.
+   */
+
+  if (episode.stream) {
+    const parsed =
+      parseStream(
+        episode.stream
+      );
+
+    if (
+      parsed?.hls
+    ) {
+      console.log(
+        "STREAM SOURCE: episode list"
+      );
+
+      return parsed;
+    }
+  }
+
+
+  /*
+   * ==========================================================
+   * METHOD 2 — SEO RESOLVE EPISODE URL
+   * ==========================================================
+   */
+
+  if (episode.webUrl) {
+    try {
+      const fullUrl =
+        episode.webUrl.startsWith(
+          "http"
+        )
+          ? episode.webUrl
+          : "https://www.mxplayer.in" +
+            episode.webUrl;
+
+      const path =
+        new URL(
+          fullUrl
+        ).pathname;
+
+      console.log(
+        "SEO EPISODE:",
+        path
+      );
+
+      const seo =
+        await mxSEO(
+          path
+        );
+
+      const data =
+        seo?.data;
+
+      const id =
+        data?.id;
+
+      const type =
+        data?.type ||
+        "episode";
+
+      if (id) {
+        const detail =
+          await mxGet(
+            "/detail/video",
+            {
+              type,
+              id
+            }
+          );
+
+        const parsed =
+          parseStream(
+            detail?.stream
+          );
+
+        if (
+          parsed?.hls
+        ) {
+          console.log(
+            "STREAM SOURCE: SEO + detail"
+          );
+
+          return parsed;
+        }
+      }
+    } catch (error) {
+      console.log(
+        "SEO stream failed:",
+        error.message
+      );
+    }
+  }
+
+
+  /*
+   * ==========================================================
+   * METHOD 3 — DIRECT EPISODE DETAIL
+   * ==========================================================
+   */
+
+  if (episode.id) {
+    try {
+      const detail =
+        await mxGet(
+          "/detail/video",
+          {
+            type: "episode",
+            id: episode.id
+          }
+        );
+
+      const parsed =
+        parseStream(
+          detail?.stream
+        );
+
+      if (
+        parsed?.hls
+      ) {
+        console.log(
+          "STREAM SOURCE: direct detail"
+        );
+
+        return parsed;
+      }
+    } catch (error) {
+      console.log(
+        "Direct detail failed:",
+        error.message
+      );
+    }
+  }
+
+
+  /*
+   * Nothing worked.
+   */
+
+  return null;
+}
+
+
+// ============================================================
+// RESOLVE SERIES
+// ============================================================
 
 async function resolveSeries(
   imdbId,
@@ -754,27 +1196,49 @@ async function resolveSeries(
   const cacheKey =
     `${imdbId}:${seasonNumber}:${episodeNumber}`;
 
+
   /*
-   * IMPORTANT:
-   *
-   * This exact episode was already verified from
-   * the user's MX Player browser network traffic.
-   *
-   * Use it immediately instead of relying on Render's
-   * MX API response, which currently returns stream:null.
+   * Confirmed browser-captured fallback.
    */
 
-  if (KNOWN_STREAMS[cacheKey]) {
+  if (
+    KNOWN_STREAMS[
+      cacheKey
+    ]
+  ) {
+    console.log(
+      "Using verified stream:",
+      cacheKey
+    );
+
     return {
-      source: "verified-browser-stream",
-      title: "Yeh Meri Family",
-      episode: "Apna Kamra",
-      hls: KNOWN_STREAMS[cacheKey]
+      title:
+        "Yeh Meri Family",
+
+      episodeTitle:
+        "Apna Kamra",
+
+      stream: {
+        hls:
+          KNOWN_STREAMS[
+            cacheKey
+          ],
+
+        dash:
+          null,
+
+        provider:
+          "mxplay"
+      },
+
+      source:
+        "verified"
     };
   }
 
+
   /*
-   * Automatic resolver for other series.
+   * IMDb → Cinemeta
    */
 
   const meta =
@@ -783,8 +1247,27 @@ async function resolveSeries(
       imdbId
     );
 
+
+  if (!meta.name) {
+    throw new Error(
+      "Cinemeta series has no title"
+    );
+  }
+
+
+  /*
+   * Cinemeta → MX show
+   */
+
   const show =
-    await findShow(meta.name);
+    await findShow(
+      meta.name
+    );
+
+
+  /*
+   * MX show → requested season
+   */
 
   const season =
     await findSeason(
@@ -792,103 +1275,129 @@ async function resolveSeries(
       seasonNumber
     );
 
-  const episode =
-    await findEpisode(
-      season,
-      episodeNumber
-    );
-
-  const episodeId =
-    getId(episode);
 
   /*
-   * Try direct detail API.
+   * Season → ALL episodes
    */
 
-  try {
-    const detail =
-      await getEpisodeDetail(
-        episodeId
-      );
+  const episodes =
+    await getSeasonEpisodes(
+      getId(season)
+    );
 
-    const hls =
-      extractHLS(detail);
 
-    if (hls.length) {
-      return {
-        source: "mx-api",
-        title: meta.name,
-        episode: getTitle(episode),
-        hls: hls[0]
-      };
-    }
-  } catch (error) {
-    console.log(
-      "Direct episode detail failed:",
-      error.message
+  if (!episodes.length) {
+    throw new Error(
+      `No episodes found for Season ${seasonNumber}`
     );
   }
 
+
   /*
-   * Try SEO using the episode web URL.
+   * Find requested episode.
    */
 
-  const webUrl =
-    episode.webUrl ||
-    episode.url ||
-    episode.web_url;
+  let episode =
+    episodes.find(
+      item =>
+        Number(
+          item.episodeNumber
+        ) ===
+        Number(
+          episodeNumber
+        )
+    );
 
-  if (webUrl) {
-    try {
-      const seo =
-        await mxSEO(webUrl);
 
-      const seoId =
-        seo?.data?.id;
+  /*
+   * Fallback: title matching.
+   */
 
-      const seoType =
-        seo?.data?.type ||
-        "episode";
+  if (!episode) {
+    episode =
+      episodes.find(
+        item => {
+          const title =
+            normalizeTitle(
+              item.title
+            );
 
-      if (seoId) {
-        const detail =
-          await mxGet(
-            "/detail/video",
-            {
-              type: seoType,
-              id: seoId
-            }
+          return (
+            title.includes(
+              `episode ${episodeNumber}`
+            ) ||
+            title.includes(
+              `ep ${episodeNumber}`
+            )
           );
-
-        const hls =
-          extractHLS(detail);
-
-        if (hls.length) {
-          return {
-            source: "mx-seo",
-            title: meta.name,
-            episode: getTitle(episode),
-            hls: hls[0]
-          };
         }
-      }
-    } catch (error) {
-      console.log(
-        "SEO episode resolution failed:",
-        error.message
       );
-    }
   }
 
-  throw new Error(
-    `MX stream unavailable for ${meta.name} S${seasonNumber}E${episodeNumber}`
+
+  if (!episode) {
+    throw new Error(
+      `Episode ${episodeNumber} not found in Season ${seasonNumber}`
+    );
+  }
+
+
+  console.log(
+    "SELECTED EPISODE:",
+    {
+      id:
+        episode.id,
+
+      title:
+        episode.title,
+
+      number:
+        episode.episodeNumber,
+
+      hasStream:
+        !!episode.stream,
+
+      hasWebUrl:
+        !!episode.webUrl
+    }
   );
+
+
+  /*
+   * Resolve actual stream.
+   */
+
+  const stream =
+    await resolveEpisodeStream(
+      episode
+    );
+
+
+  if (!stream?.hls) {
+    throw new Error(
+      `MX stream unavailable for ${meta.name} S${seasonNumber}E${episodeNumber}`
+    );
+  }
+
+
+  return {
+    title:
+      meta.name,
+
+    episodeTitle:
+      episode.title,
+
+    stream,
+
+    source:
+      "mx"
+  };
 }
 
 
-/* ============================================================
-   MOVIE
-   ============================================================ */
+// ============================================================
+// MOVIE
+// ============================================================
 
 async function resolveMovie(
   imdbId
@@ -899,20 +1408,27 @@ async function resolveMovie(
       imdbId
     );
 
+
   const results =
-    await searchMX(meta.name);
+    await searchMX(
+      meta.name
+    );
+
 
   const wanted =
-    normalizeTitle(meta.name);
+    normalizeTitle(
+      meta.name
+    );
+
 
   const movie =
-    results.find(item => {
-      return (
+    results.find(
+      item =>
         normalizeTitle(
           getTitle(item)
         ) === wanted
-      );
-    });
+    );
+
 
   if (!movie) {
     throw new Error(
@@ -920,8 +1436,35 @@ async function resolveMovie(
     );
   }
 
-  const movieId =
+
+  const id =
     getId(movie);
+
+
+  /*
+   * If search already has a stream,
+   * use it immediately.
+   */
+
+  if (movie.stream) {
+    const parsed =
+      parseStream(
+        movie.stream
+      );
+
+    if (
+      parsed?.hls
+    ) {
+      return {
+        title:
+          meta.name,
+
+        stream:
+          parsed
+      };
+    }
+  }
+
 
   const detail =
     await mxGet(
@@ -930,33 +1473,44 @@ async function resolveMovie(
         type:
           movie.type ||
           "movie",
-        id: movieId
+
+        id
       }
     );
 
-  const hls =
-    extractHLS(detail);
 
-  if (!hls.length) {
+  const stream =
+    parseStream(
+      detail?.stream
+    );
+
+
+  if (!stream?.hls) {
     throw new Error(
-      `MX movie has no HLS: ${meta.name}`
+      `MX movie has no stream: ${meta.name}`
     );
   }
 
+
   return {
-    title: meta.name,
-    hls: hls[0]
+    title:
+      meta.name,
+
+    stream
   };
 }
 
 
-/* ============================================================
-   STREAM ENDPOINT
-   ============================================================ */
+// ============================================================
+// STREMIO STREAM ROUTE
+// ============================================================
 
 app.get(
   "/stream/:type/:id.json",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     res.setHeader(
       "Access-Control-Allow-Origin",
       "*"
@@ -967,6 +1521,7 @@ app.get(
       "*"
     );
 
+
     const type =
       req.params.type;
 
@@ -975,22 +1530,32 @@ app.get(
         req.params.id
       );
 
+
     console.log(
-      "STREAM:",
+      "===================================="
+    );
+
+    console.log(
+      "STREAM REQUEST:",
       type,
       id
     );
 
+
     try {
+
       /*
        * SERIES
        */
 
-      if (type === "series") {
+      if (
+        type === "series"
+      ) {
         const match =
           id.match(
             /^(tt\d+):(\d+):(\d+)$/
           );
+
 
         if (!match) {
           return res.json({
@@ -998,11 +1563,20 @@ app.get(
           });
         }
 
-        const imdbId = match[1];
+
+        const imdbId =
+          match[1];
+
         const season =
-          Number(match[2]);
+          Number(
+            match[2]
+          );
+
         const episode =
-          Number(match[3]);
+          Number(
+            match[3]
+          );
+
 
         const result =
           await resolveSeries(
@@ -1011,56 +1585,78 @@ app.get(
             episode
           );
 
+
         return res.json({
           streams: [
             {
-              name: "MX Player",
+              name:
+                "MX Player",
+
               title:
-                `${result.title} S${season}E${episode}`,
-              url: result.hls,
+                `${result.title} S${season}E${episode} — ${result.episodeTitle}`,
+
+              url:
+                result.stream.hls,
 
               behaviorHints: {
-                notWebReady: true,
-                bingeGroup: "mxplayer"
+                notWebReady:
+                  true,
+
+                bingeGroup:
+                  "mxplayer"
               }
             }
           ]
         });
       }
+
 
       /*
        * MOVIE
        */
 
-      if (type === "movie") {
+      if (
+        type === "movie"
+      ) {
         const result =
-          await resolveMovie(id);
+          await resolveMovie(
+            id
+          );
+
 
         return res.json({
           streams: [
             {
-              name: "MX Player",
-              title: result.title,
-              url: result.hls,
+              name:
+                "MX Player",
+
+              title:
+                result.title,
+
+              url:
+                result.stream.hls,
 
               behaviorHints: {
-                notWebReady: true,
-                bingeGroup: "mxplayer"
+                notWebReady:
+                  true
               }
             }
           ]
         });
       }
+
 
       return res.json({
         streams: []
       });
 
     } catch (error) {
+
       console.error(
         "STREAM ERROR:",
         error.message
       );
+
 
       return res.json({
         streams: []
@@ -1070,37 +1666,54 @@ app.get(
 );
 
 
-/* ============================================================
-   DEBUG SERIES
-   ============================================================ */
+// ============================================================
+// DEBUG SERIES
+// ============================================================
 
 app.get(
   "/debug/series/:id",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
+
     const id =
       decodeURIComponent(
         req.params.id
       );
 
+
     try {
+
       const match =
         id.match(
           /^(tt\d+):(\d+):(\d+)$/
         );
 
+
       if (!match) {
         return res.json({
           success: false,
+
           error:
-            "Use ttID:season:episode"
+            "Expected ttID:season:episode"
         });
       }
 
-      const imdbId = match[1];
+
+      const imdbId =
+        match[1];
+
       const season =
-        Number(match[2]);
+        Number(
+          match[2]
+        );
+
       const episode =
-        Number(match[3]);
+        Number(
+          match[3]
+        );
+
 
       const result =
         await resolveSeries(
@@ -1109,89 +1722,193 @@ app.get(
           episode
         );
 
+
       return res.json({
-        success: true,
-        source: result.source,
+        success:
+          true,
+
+        source:
+          result.source,
+
         imdbId,
+
         season,
+
         episode,
-        title: result.title,
+
+        title:
+          result.title,
+
         episodeTitle:
-          result.episode,
-        hls: result.hls
+          result.episodeTitle,
+
+        hls:
+          result.stream.hls
       });
 
     } catch (error) {
+
       return res.json({
-        success: false,
-        error: error.message
+        success:
+          false,
+
+        error:
+          error.message
       });
     }
   }
 );
 
 
-/* ============================================================
-   HEALTH
-   ============================================================ */
+// ============================================================
+// DEBUG SEASON EPISODES
+// ============================================================
+
+app.get(
+  "/debug/episodes/:seasonId",
+  async (
+    req,
+    res
+  ) => {
+
+    const seasonId =
+      decodeURIComponent(
+        req.params.seasonId
+      );
+
+
+    try {
+
+      const episodes =
+        await getSeasonEpisodes(
+          seasonId
+        );
+
+
+      return res.json({
+        success:
+          true,
+
+        seasonId,
+
+        count:
+          episodes.length,
+
+        episodes:
+          episodes.map(
+            e => ({
+              id:
+                e.id,
+
+              title:
+                e.title,
+
+              episode:
+                e.episodeNumber,
+
+              hasStream:
+                !!e.stream,
+
+              hls:
+                e.stream
+                  ? parseStream(
+                      e.stream
+                    )?.hls ||
+                    null
+                  : null,
+
+              webUrl:
+                e.webUrl
+            })
+          )
+      });
+
+    } catch (error) {
+
+      return res.json({
+        success:
+          false,
+
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// HEALTH
+// ============================================================
 
 app.get(
   "/health",
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     res.json({
-      ok: true,
-      addon: "MX Player Resolver",
-      version: "3.0.0"
+      ok:
+        true,
+
+      addon:
+        "MX Player Resolver",
+
+      version:
+        "4.0.0"
     });
   }
 );
 
 
-/* ============================================================
-   MANIFEST
-   ============================================================ */
+// ============================================================
+// MANIFEST
+// ============================================================
 
 app.get(
   "/manifest.json",
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     res.setHeader(
       "Access-Control-Allow-Origin",
       "*"
     );
 
-    res.json(manifest);
+    res.json(
+      manifest
+    );
   }
 );
 
 
-/* ============================================================
-   ROOT
-   ============================================================ */
+// ============================================================
+// ROOT
+// ============================================================
 
 app.get(
   "/",
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     res.send(`
       <h2>MX Player Resolver</h2>
-      <p>Running — v3.0.0</p>
-      <p>
-        <a href="/manifest.json">
-          manifest.json
-        </a>
-      </p>
-      <p>
-        <a href="/health">
-          health
-        </a>
-      </p>
+      <p>Running — v4.0.0</p>
+      <p><a href="/manifest.json">Manifest</a></p>
+      <p><a href="/health">Health</a></p>
     `);
   }
 );
 
 
-/* ============================================================
-   START
-   ============================================================ */
+// ============================================================
+// START
+// ============================================================
 
 app.listen(
   PORT,
