@@ -870,6 +870,9 @@ async function resolveSeriesEpisode(imdbId, seasonNumber, episodeNumber) {
     episode.contentId ||
     episode.content_id;
 
+  console.log("EPISODE ID:", episodeId);
+  console.log("EPISODE OBJECT:", JSON.stringify(episode, null, 2));
+  
   // 5. Episode detail
   const detail = await getMXEpisodeDetail(
     episodeId
