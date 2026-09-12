@@ -2,2584 +2,1244 @@ const express = require("express");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const HOST = "0.0.0.0";
 
-const VERSION = "6.0.0";
+const VERSION = "7.0.0";
 
-// ============================================================
-// CONFIG
-// ============================================================
+const MX_API_HOSTS = [
+  "https://api.mxplayer.in/v1/web",
+  "https://api.mxplay.com/v1/web"
+];
 
-const API_BASE =
-  "https://api.mxplayer.in/v1/web";
+const MX_SEO_HOSTS = [
+  "https://seo.mxplayer.in/v1/api/seo",
+  "https://seo.mxplay.com/v1/api/seo"
+];
 
-const SEO_BASE =
-  "https://seo.mxplayer.in/v1/api/seo";
+const MX_WEB = "https://www.mxplayer.in";
 
-const MX_SITE =
-  "https://www.mxplayer.in";
+const USER_ID =
+  process.env.MX_USER_ID ||
+  "stremio-" +
+    Math.random().toString(36).slice(2) +
+    "-" +
+    Date.now().toString(36);
 
-const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-  "AppleWebKit/537.36 (KHTML, like Gecko) " +
-  "Chrome/125.0.0.0 Safari/537.36";
-
-const CONTENT_LANGUAGES =
-  "hi,mr,pa,bn,en,ml,kn,gu,te,ta";
-
-let USER_ID = makeUUID();
-
-function makeUUID() {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
-    /[xy]/g,
-    function (c) {
-      const r = Math.random() * 16 | 0;
-      const v =
-        c === "x"
-          ? r
-          : (r & 0x3) | 0x8;
-
-      return v.toString(16);
-    }
-  );
-}
-
-// ============================================================
-// VERIFIED CONTENT MAP
-// ============================================================
-//
-// We use this to bypass MX search for content where we already
-// know the official MX Player page.
-//
-// This does NOT contain a stream URL. It only identifies the
-// public MX Player page for the show.
-//
-// ============================================================
-
-const KNOWN_SHOWS = {
-  "tt8595766": {
-    title: "Yeh Meri Family",
-
-    webUrl:
-      "https://www.mxplayer.in/show/watch-yeh-meri-family/online-0f96e29c17b376b5ea2dab191ab97d83",
-
-    seasons: {
-      "2": {
-        id:
-          "1a8452f31b2fcff5e495b44afdb3fbdb",
-
-        webUrl:
-          "https://www.mxplayer.in/show/watch-yeh-meri-family/seasons/season-2-1a8452f31b2fcff5e495b44afdb3fbdb"
-      }
-    }
-  }
+const COMMON_PARAMS = {
+  "device-density": "2",
+  platform: "com.mxplay.desktop",
+  "content-languages": "hi,en,ta,te,ml,kn,bn,mr,gu,pa",
+  "kids-mode-enabled": "false",
+  userid: USER_ID
 };
 
-// ============================================================
-// VERIFIED STREAM FALLBACK
-// ============================================================
-//
-// Only S2E1 has been personally verified from the browser
-// Network request.
-//
-// ============================================================
+/*
+ * VERIFIED STREAMS
+ *
+ * These were obtained from the actual MX Player web player's
+ * successful HLS requests.
+ *
+ * E1:
+ * tt8595766:2:1
+ *
+ * E2:
+ * tt8595766:2:2
+ */
 
 const KNOWN_STREAMS = {
   "tt8595766:2:1":
-    "https://d3sgzbosmwirao.cloudfront.net/video/637eda9d371fa6ddeac209e765b524413fa1cdd15e34d0da6ece4fc9c6706218/3/hls/h264_high.m3u8"
+    "https://d3sgzbosmwirao.cloudfront.net/video/637eda9d371fa6ddeac209e765b524413fa1cdd15e34d0da6ece4fc9c6706218/3/hls/h264_high.m3u8",
+
+  "tt8595766:2:2":
+    "https://d3sgzbosmwirao.cloudfront.net/video/f275ab1d5b01a1c891d6948b650f3f6ca0f48b780ca7ab2a76ffea423a233c03/3/hls/h264_480_high_1750k.m3u8"
 };
 
-// ============================================================
-// HTTP HELPERS
-// ============================================================
+/*
+ * VERIFIED SHOW / SEASON INFORMATION
+ */
 
-async function request(
-  url,
-  options = {}
-) {
-  const controller =
-    new AbortController();
+const KNOWN_SHOWS = {
+  tt8595766: {
+    title: "Yeh Meri Family",
+    showId: "0f96e29c17b376b5ea2dab191ab97d83",
 
-  const timeout =
-    setTimeout(
-      () => controller.abort(),
-      options.timeout || 20000
-    );
-
-  try {
-    const response =
-      await fetch(url, {
-        method:
-          options.method || "GET",
-
-        headers: {
-          "User-Agent":
-            USER_AGENT,
-
-          "Accept":
-            options.accept ||
-            "application/json, text/plain, */*",
-
-          "Referer":
-            "https://www.mxplayer.in/",
-
-          "Origin":
-            "https://www.mxplayer.in",
-
-          ...(options.headers || {})
-        },
-
-        body:
-          options.body,
-
-        signal:
-          controller.signal
-      });
-
-    const text =
-      await response.text();
-
-    let json = null;
-
-    try {
-      json =
-        JSON.parse(text);
-    } catch {
-      // Not JSON.
-    }
-
-    return {
-      ok:
-        response.ok,
-
-      status:
-        response.status,
-
-      json,
-
-      text:
-        text.substring(0, 5000)
-    };
-
-  } catch (error) {
-
-    return {
-      ok: false,
-      status: 0,
-      json: null,
-      text: "",
-      error:
-        error.message
-    };
-
-  } finally {
-
-    clearTimeout(timeout);
-  }
-}
-
-// ============================================================
-// MX COMMON QUERY PARAMETERS
-// ============================================================
-
-function commonParams() {
-  return {
-    "device-density":
-      "2",
-
-    "platform":
-      "com.mxplay.desktop",
-
-    "content-languages":
-      CONTENT_LANGUAGES,
-
-    "kids-mode-enabled":
-      "false",
-
-    userid:
-      USER_ID
-  };
-}
-
-function makeUrl(
-  base,
-  path,
-  params = {}
-) {
-  const url =
-    new URL(
-      base + path
-    );
-
-  const all = {
-    ...commonParams(),
-    ...params
-  };
-
-  for (
-    const [key, value]
-    of Object.entries(all)
-  ) {
-
-    if (
-      value !== undefined &&
-      value !== null &&
-      value !== ""
-    ) {
-      url.searchParams.set(
-        key,
-        String(value)
-      );
+    seasons: {
+      2: "1a8452f31b2fcff5e495b44afdb3fbdb"
     }
   }
+};
 
-  return url.toString();
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ============================================================
-// MX GET
-// ============================================================
+function absoluteUrl(url) {
+  if (!url) return null;
 
-async function mxGet(
-  path,
-  params = {}
-) {
-  const url =
-    makeUrl(
-      API_BASE,
-      path,
-      params
-    );
-
-  console.log(
-    "[MX GET]",
-    url
-  );
-
-  const result =
-    await request(
-      url
-    );
-
-  return {
-    ...result,
-    url
-  };
-}
-
-// ============================================================
-// MX POST
-// ============================================================
-//
-// IMPORTANT:
-// search/resultv2 is POST in the current MX API client.
-// ============================================================
-
-async function mxPost(
-  path,
-  body = {},
-  params = {}
-) {
-  const url =
-    makeUrl(
-      API_BASE,
-      path,
-      params
-    );
-
-  console.log(
-    "[MX POST]",
-    url,
-    JSON.stringify(body)
-  );
-
-  const result =
-    await request(
-      url,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json"
-        },
-
-        body:
-          JSON.stringify(body)
-      }
-    );
-
-  return {
-    ...result,
-    url
-  };
-}
-
-// ============================================================
-// SEO
-// ============================================================
-
-async function mxSeo(
-  pageUrl
-) {
-  let path =
-    pageUrl;
-
-  try {
-    if (
-      pageUrl.startsWith(
-        "http://"
-      ) ||
-      pageUrl.startsWith(
-        "https://"
-      )
-    ) {
-      path =
-        new URL(
-          pageUrl
-        ).pathname;
-    }
-  } catch {
-    return {
-      success: false,
-      error:
-        "Invalid MX URL"
-    };
-  }
-
-  if (
-    !path.startsWith("/")
-  ) {
-    path =
-      "/" + path;
-  }
-
-  const url =
-    makeUrl(
-      SEO_BASE,
-      "/get-url-details",
-      {
-        url:
-          path
-      }
-    );
-
-  console.log(
-    "[MX SEO]",
-    url
-  );
-
-  const result =
-    await request(
-      url
-    );
-
-  if (
-    !result.ok ||
-    !result.json
-  ) {
-    return {
-      success: false,
-      error:
-        "MX SEO request failed",
-
-      status:
-        result.status,
-
-      raw:
-        result.text
-    };
-  }
-
-  const data =
-    result.json.data;
-
-  if (!data) {
-    return {
-      success: false,
-      error:
-        "MX SEO returned no data",
-
-      raw:
-        result.json
-    };
-  }
-
-  return {
-    success: true,
-    data:
-      data,
-
-    raw:
-      result.json
-  };
-}
-
-// ============================================================
-// STREAM PARSER
-// ============================================================
-
-function normalizeStreamUrl(
-  url
-) {
-  if (!url) {
-    return null;
-  }
-
-  if (
-    url.startsWith(
-      "http://"
-    ) ||
-    url.startsWith(
-      "https://"
-    )
-  ) {
+  if (/^https?:\/\//i.test(url)) {
     return url;
   }
 
-  return (
-    "https://d3sgzbosmwirao.cloudfront.net/" +
-    String(url)
-      .replace(/^\/+/, "")
-  );
-}
-
-function parseStream(
-  stream
-) {
-  if (
-    !stream ||
-    typeof stream !== "object"
-  ) {
-    return {
-      hls: null,
-      dash: null,
-      videoHash: null,
-      drmProtect: false,
-      provider: null
-    };
+  if (url.startsWith("//")) {
+    return "https:" + url;
   }
 
-  const hls =
-    stream.hls || {};
-
-  const dash =
-    stream.dash || {};
-
-  const thirdParty =
-    stream.thirdParty || {};
-
-  const altBalaji =
-    stream.altBalaji || {};
-
-  const mxplay =
-    stream.mxplay || {};
-
-  const hlsUrl =
-    hls.high ||
-    hls.base ||
-    hls.main ||
-    thirdParty.hlsUrl ||
-    altBalaji.hlsUrl ||
-    (
-      mxplay.hls &&
-      (
-        mxplay.hls.high ||
-        mxplay.hls.base ||
-        mxplay.hls.main
-      )
-    );
-
-  const dashUrl =
-    dash.high ||
-    dash.base ||
-    dash.main ||
-    thirdParty.dashUrl ||
-    altBalaji.dashUrl ||
-    (
-      mxplay.dash &&
-      (
-        mxplay.dash.high ||
-        mxplay.dash.base ||
-        mxplay.dash.main
-      )
-    );
-
-  return {
-    hls:
-      normalizeStreamUrl(
-        hlsUrl
-      ),
-
-    dash:
-      normalizeStreamUrl(
-        dashUrl
-      ),
-
-    videoHash:
-      stream.videoHash ||
-      null,
-
-    drmProtect:
-      Boolean(
-        stream.drmProtect
-      ),
-
-    provider:
-      stream.provider ||
-      null,
-
-    aspectRatio:
-      stream.aspectRatio ||
-      null
-  };
-}
-
-// ============================================================
-// DETAIL VIDEO
-// ============================================================
-
-async function getVideoDetail(
-  id,
-  type = "episode"
-) {
-  if (!id) {
-    return {
-      success: false,
-      error:
-        "Missing content ID"
-    };
+  if (url.startsWith("/")) {
+    return "https://d3sgzbosmwirao.cloudfront.net" + url;
   }
 
-  const result =
-    await mxGet(
-      "/detail/video",
-      {
-        id,
-        type
+  return url;
+}
+
+function decodeHtml(str) {
+  if (!str) return str;
+
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function safeJson(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+/*
+ * Generic HTTP helpers
+ */
+
+async function mxGet(path, params = {}, timeoutMs = 15000) {
+  let lastError = null;
+
+  for (const host of MX_API_HOSTS) {
+    try {
+      const url = new URL(host + path);
+
+      const merged = {
+        ...COMMON_PARAMS,
+        ...params
+      };
+
+      for (const [key, value] of Object.entries(merged)) {
+        if (value !== undefined && value !== null) {
+          url.searchParams.set(key, String(value));
+        }
       }
-    );
 
-  if (
-    !result.ok ||
-    !result.json
-  ) {
-    return {
-      success: false,
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-      error:
-        "MX detail/video failed",
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+          Accept: "application/json,text/plain,*/*",
+          Referer: MX_WEB + "/",
+          Origin: MX_WEB
+        },
+        signal: controller.signal
+      });
 
-      status:
-        result.status,
+      clearTimeout(timer);
 
-      raw:
-        result.text
-    };
-  }
+      const text = await response.text();
 
-  const data =
-    result.json;
+      let json = null;
 
-  return {
-    success: true,
+      try {
+        json = JSON.parse(text);
+      } catch {}
 
-    data,
-
-    stream:
-      parseStream(
-        data.stream
-      )
-  };
-}
-
-// ============================================================
-// NEXT VIDEO
-// ============================================================
-
-async function getNextVideo(
-  id
-) {
-  const result =
-    await mxGet(
-      "/detail/nextVideo",
-      {
-        id,
-        type: "episode"
-      }
-    );
-
-  if (
-    !result.ok ||
-    !result.json
-  ) {
-    return {
-      success: false,
-
-      status:
-        result.status,
-
-      raw:
-        result.text
-    };
-  }
-
-  return {
-    success: true,
-
-    data:
-      result.json
-  };
-}
-
-// ============================================================
-// SEARCH — CORRECT POST VERSION
-// ============================================================
-
-async function searchShow(
-  title
-) {
-  const result =
-    await mxPost(
-      "/search/resultv2",
-      {
-        query:
-          title
-      }
-    );
-
-  if (
-    !result.ok ||
-    !result.json
-  ) {
-    return {
-      success: false,
-
-      error:
-        "MX search failed",
-
-      status:
-        result.status,
-
-      raw:
-        result.text
-    };
-  }
-
-  const root =
-    result.json.data !== undefined
-      ? result.json.data
-      : result.json;
-
-  const sections =
-    root &&
-    Array.isArray(
-      root.sections
-    )
-      ? root.sections
-      : [];
-
-  const matches = [];
-
-  for (
-    const section
-    of sections
-  ) {
-
-    const items =
-      Array.isArray(
-        section.items
-      )
-        ? section.items
-        : [];
-
-    for (
-      const item
-      of items
-    ) {
-
-      if (
-        item &&
-        item.id &&
-        (
-          item.type ===
-            "tvshow" ||
-          item.type ===
-            "tv_show"
-        )
-      ) {
-        matches.push(
-          item
+      if (!response.ok) {
+        lastError = new Error(
+          `MX GET ${path} failed: ${response.status}`
         );
+        lastError.status = response.status;
+        lastError.raw = text;
+        continue;
       }
+
+      return {
+        success: true,
+        status: response.status,
+        json,
+        text,
+        host
+      };
+    } catch (error) {
+      lastError = error;
     }
   }
 
-  const wanted =
-    title
-      .trim()
-      .toLowerCase();
-
-  let match =
-    matches.find(
-      item =>
-        String(
-          item.title || ""
-        )
-          .trim()
-          .toLowerCase() ===
-        wanted
-    );
-
-  if (!match) {
-
-    const normalize =
-      value =>
-        String(
-          value || ""
-        )
-          .toLowerCase()
-          .replace(
-            /[^\p{L}\p{N}]+/gu,
-            " "
-          )
-          .trim();
-
-    const wantedNorm =
-      normalize(
-        title
-      );
-
-    match =
-      matches.find(
-        item =>
-          normalize(
-            item.title
-          ) ===
-          wantedNorm
-      );
-  }
-
-  if (!match) {
-
-    match =
-      matches.find(
-        item => {
-
-          const candidate =
-            String(
-              item.title ||
-              ""
-            )
-              .toLowerCase();
-
-          return (
-            candidate.includes(
-              wanted
-            ) ||
-            wanted.includes(
-              candidate
-            )
-          );
-        }
-      );
-  }
-
-  if (!match) {
-    return {
-      success: false,
-
-      error:
-        "MX show not found",
-
-      candidates:
-        matches
-          .slice(0, 20)
-          .map(
-            item => ({
-              id:
-                item.id,
-
-              title:
-                item.title,
-
-              webUrl:
-                item.webUrl
-            })
-          )
-    };
-  }
-
-  return {
-    success: true,
-
-    show:
-      match
-  };
+  throw lastError || new Error("MX request failed");
 }
 
-// ============================================================
-// CINEMETA
-// ============================================================
+async function mxPost(path, params = {}, body = null, timeoutMs = 15000) {
+  let lastError = null;
 
-async function getCinemeta(
-  imdbId
-) {
-  const url =
-    `https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(imdbId)}.json`;
+  for (const host of MX_API_HOSTS) {
+    try {
+      const url = new URL(host + path);
 
-  const result =
-    await request(
+      const merged = {
+        ...COMMON_PARAMS,
+        ...params
+      };
+
+      for (const [key, value] of Object.entries(merged)) {
+        if (value !== undefined && value !== null) {
+          url.searchParams.set(key, String(value));
+        }
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+          Accept: "application/json,text/plain,*/*",
+          "Content-Type": "application/json",
+          Referer: MX_WEB + "/",
+          Origin: MX_WEB
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal
+      });
+
+      clearTimeout(timer);
+
+      const text = await response.text();
+
+      let json = null;
+
+      try {
+        json = JSON.parse(text);
+      } catch {}
+
+      if (!response.ok) {
+        lastError = new Error(
+          `MX POST ${path} failed: ${response.status}`
+        );
+        lastError.status = response.status;
+        lastError.raw = text;
+        continue;
+      }
+
+      return {
+        success: true,
+        status: response.status,
+        json,
+        text,
+        host
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("MX POST failed");
+}
+
+/*
+ * SEO request
+ */
+
+async function mxSeo(urlPath) {
+  let lastError = null;
+
+  for (const host of MX_SEO_HOSTS) {
+    try {
+      const url = new URL(host + "/get-url-details");
+
+      url.searchParams.set("url", urlPath);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+          Accept: "application/json,text/plain,*/*",
+          Referer: MX_WEB + "/",
+          Origin: MX_WEB
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timer);
+
+      const text = await response.text();
+
+      let json = null;
+
+      try {
+        json = JSON.parse(text);
+      } catch {}
+
+      if (!response.ok) {
+        lastError = new Error(
+          `MX SEO failed: ${response.status}`
+        );
+        lastError.status = response.status;
+        lastError.raw = text;
+        continue;
+      }
+
+      return {
+        success: true,
+        status: response.status,
+        json,
+        text,
+        host
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("MX SEO failed");
+}
+
+/*
+ * Fetch the actual MX webpage.
+ *
+ * This is important because the public detail API can return
+ * stream:null even though the web player obtains a valid CDN
+ * playlist.
+ */
+
+async function fetchMxPage(urlPath) {
+  const url = urlPath.startsWith("http")
+    ? urlPath
+    : MX_WEB + urlPath;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Referer: MX_WEB + "/"
+      },
+      signal: controller.signal
+    });
+
+    const text = await response.text();
+
+    return {
+      ok: response.ok,
+      status: response.status,
       url,
+      text
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/*
+ * Find playable HLS URLs in MX page HTML.
+ */
+
+function extractHlsUrls(text) {
+  if (!text) return [];
+
+  const results = new Set();
+
+  /*
+   * Normal quoted URLs.
+   */
+  const quotedRegex =
+    /https?:\/\/[^"'\\\s<>]+?\.m3u8(?:\?[^"'\\\s<>]*)?/gi;
+
+  for (const match of text.matchAll(quotedRegex)) {
+    let url = decodeHtml(match[0]);
+
+    url = url.replace(/\\u0026/g, "&");
+    url = url.replace(/\\u003d/g, "=");
+    url = url.replace(/\\\//g, "/");
+
+    if (url.includes("cloudfront.net/video/")) {
+      results.add(url);
+    }
+  }
+
+  /*
+   * Escaped JSON URLs.
+   */
+  const escapedRegex =
+    /https?:\\\/\\\/[^"'\\\s<>]+?\.m3u8(?:\\\?[^"'\\\s<>]*)?/gi;
+
+  for (const match of text.matchAll(escapedRegex)) {
+    let url = match[0]
+      .replace(/\\\//g, "/")
+      .replace(/\\u0026/g, "&")
+      .replace(/\\u003d/g, "=");
+
+    if (url.includes("cloudfront.net/video/")) {
+      results.add(url);
+    }
+  }
+
+  return [...results];
+}
+
+/*
+ * Pick the best HLS playlist.
+ *
+ * Prefer 480p because it is a good Stremio/MX Player default
+ * and was verified working for E2.
+ */
+
+function chooseBestHls(urls) {
+  if (!urls || urls.length === 0) return null;
+
+  const score = (url) => {
+    const lower = url.toLowerCase();
+
+    if (lower.includes("1080")) return 100;
+    if (lower.includes("720")) return 90;
+    if (lower.includes("480")) return 80;
+    if (lower.includes("360")) return 60;
+    if (lower.includes("180")) return 20;
+
+    if (lower.includes("high")) return 70;
+
+    return 50;
+  };
+
+  return [...urls].sort((a, b) => score(b) - score(a))[0];
+}
+
+/*
+ * Extract HLS from page JSON-LD and embedded player data.
+ */
+
+async function resolveStreamFromPage(webUrl) {
+  if (!webUrl) return null;
+
+  try {
+    const page = await fetchMxPage(webUrl);
+
+    if (!page.ok) {
+      return null;
+    }
+
+    const urls = extractHlsUrls(page.text);
+
+    const selected = chooseBestHls(urls);
+
+    if (selected) {
+      return selected;
+    }
+
+    /*
+     * Some pages may contain a JSON-LD contentUrl encoded
+     * differently. Search around contentUrl.
+     */
+
+    const contentUrlRegex =
+      /"contentUrl"\s*:\s*"([^"]+)"/gi;
+
+    const contentUrls = [];
+
+    for (const match of page.text.matchAll(contentUrlRegex)) {
+      let value = match[1]
+        .replace(/\\\//g, "/")
+        .replace(/\\u0026/g, "&")
+        .replace(/\\u003d/g, "=");
+
+      if (value.includes(".m3u8")) {
+        contentUrls.push(value);
+      }
+    }
+
+    return chooseBestHls(contentUrls);
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * Search MX
+ */
+
+async function searchMx(query) {
+  const response = await mxPost(
+    "/search/resultv2",
+    {
+      query
+    },
+    null
+  );
+
+  return response.json;
+}
+
+/*
+ * Direct episode detail
+ */
+
+async function detailVideo(id, contentType = "episode") {
+  const response = await mxGet("/detail/video", {
+    type: contentType,
+    id
+  });
+
+  return response.json;
+}
+
+/*
+ * Next episode.
+ *
+ * This is the key discovery mechanism we verified with E1 -> E2.
+ */
+
+async function nextVideo(id, contentType = "episode") {
+  const response = await mxGet("/detail/nextVideo", {
+    type: contentType,
+    id
+  });
+
+  return response.json;
+}
+
+/*
+ * Season episode list
+ */
+
+async function seasonEpisodes(seasonId) {
+  const all = [];
+
+  let page = 0;
+  const pageSize = 50;
+
+  while (page < 10) {
+    const response = await mxGet(
+      "/detail/tab/tvshowepisodes",
       {
-        timeout: 15000
+        type: "season",
+        id: seasonId,
+        sortOrder: "0",
+        pageNum: String(page),
+        pageSize: String(pageSize)
       }
     );
 
-  if (
-    result.ok &&
-    result.json &&
-    result.json.meta
-  ) {
-    return result.json.meta;
+    const json = response.json;
+
+    const containers =
+      json?.containers ||
+      json?.data?.containers ||
+      json?.results ||
+      json?.data?.results ||
+      [];
+
+    if (!Array.isArray(containers) || containers.length === 0) {
+      break;
+    }
+
+    all.push(...containers);
+
+    if (containers.length < pageSize) {
+      break;
+    }
+
+    page++;
+  }
+
+  return all;
+}
+
+/*
+ * Recursively find objects in arbitrary MX JSON.
+ */
+
+function findObjects(value, predicate, found = []) {
+  if (!value || typeof value !== "object") {
+    return found;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      findObjects(item, predicate, found);
+    }
+    return found;
+  }
+
+  try {
+    if (predicate(value)) {
+      found.push(value);
+    }
+  } catch {}
+
+  for (const child of Object.values(value)) {
+    if (child && typeof child === "object") {
+      findObjects(child, predicate, found);
+    }
+  }
+
+  return found;
+}
+
+/*
+ * Extract an ID from MX nextVideo/detail responses.
+ */
+
+function extractEpisodeObject(json) {
+  if (!json) return null;
+
+  const candidates = findObjects(
+    json,
+    (obj) => {
+      return (
+        typeof obj.id === "string" &&
+        (
+          obj.type === "episode" ||
+          obj.subType === "episode" ||
+          typeof obj.title === "string" ||
+          typeof obj.name === "string"
+        )
+      );
+    }
+  );
+
+  if (candidates.length) {
+    return candidates[0];
   }
 
   return null;
 }
 
-// ============================================================
-// SHOW RESOLUTION
-// ============================================================
+/*
+ * Find webUrl/page URL inside arbitrary MX JSON.
+ */
 
-async function resolveShow(
-  imdbId
-) {
-  // ----------------------------------------------------------
-  // FIRST: known exact MX mapping
-  // ----------------------------------------------------------
-
-  if (
-    KNOWN_SHOWS[imdbId]
-  ) {
-    console.log(
-      "[SHOW] Using known MX page for",
-      imdbId
-    );
-
-    return {
-      success: true,
-
-      show:
-        KNOWN_SHOWS[imdbId]
-    };
-  }
-
-  // ----------------------------------------------------------
-  // SECOND: Cinemeta title → correct POST search
-  // ----------------------------------------------------------
-
-  const meta =
-    await getCinemeta(
-      imdbId
-    );
-
-  const title =
-    meta &&
-    meta.name
-      ? meta.name
-      : imdbId;
-
-  console.log(
-    "[SHOW] Searching MX for",
-    title
+function extractWebUrl(json) {
+  const objects = findObjects(
+    json,
+    (obj) => {
+      return (
+        typeof obj.webUrl === "string" &&
+        obj.webUrl.includes("mxplayer")
+          ? true
+          : typeof obj.webUrl === "string" &&
+            obj.webUrl.includes("/show/")
+      );
+    }
   );
 
-  const search =
-    await searchShow(
-      title
-    );
-
-  if (
-    !search.success
-  ) {
-    return search;
+  if (objects.length) {
+    return objects[0].webUrl;
   }
 
-  return {
-    success: true,
-
-    show:
-      search.show
-  };
+  return null;
 }
 
-// ============================================================
-// SEASON EPISODES
-// ============================================================
+/*
+ * Resolve a video's HLS through the normal MX webpage.
+ */
 
-async function getSeasonEpisodes(
-  seasonId
-) {
-  const episodes = [];
+async function resolveEpisodePageStream(episode) {
+  if (!episode) return null;
 
-  let nextToken =
-    null;
+  const possibleUrls = [];
 
-  const seenTokens =
-    new Set();
-
-  for (
-    let page = 0;
-    page < 20;
-    page++
-  ) {
-
-    const params = {
-      type:
-        "season",
-
-      id:
-        seasonId,
-
-      sortOrder:
-        "0"
-    };
-
-    // MX returns its next pagination token
-    // as a query-string fragment.
-    if (
-      nextToken
-    ) {
-
-      try {
-
-        const parsed =
-          new URLSearchParams(
-            nextToken
-          );
-
-        for (
-          const [
-            key,
-            value
-          ]
-          of parsed.entries()
-        ) {
-
-          params[key] =
-            value;
-        }
-
-      } catch {
-        // Continue without malformed token.
-      }
-    }
-
-    const result =
-      await mxGet(
-        "/detail/tab/tvshowepisodes",
-        params
-      );
-
-    if (
-      !result.ok ||
-      !result.json
-    ) {
-
-      return {
-        success: false,
-
-        error:
-          "MX season episodes request failed",
-
-        status:
-          result.status,
-
-        raw:
-          result.text,
-
-        episodes
-      };
-    }
-
-    const root =
-      result.json;
-
-    let payload =
-      root.data !== undefined
-        ? root.data
-        : root;
-
-    let items = [];
-
-    if (
-      Array.isArray(
-        payload
-      )
-    ) {
-
-      items =
-        payload;
-
-    } else if (
-      payload &&
-      Array.isArray(
-        payload.items
-      )
-    ) {
-
-      items =
-        payload.items;
-    }
-
-    console.log(
-      "[EPISODE PAGE]",
-      page + 1,
-      "items:",
-      items.length
-    );
-
-    if (
-      !items.length
-    ) {
-      break;
-    }
-
-    for (
-      const item
-      of items
-    ) {
-
-      if (
-        !item ||
-        !item.id
-      ) {
-        continue;
-      }
-
-      episodes.push({
-        id:
-          item.id,
-
-        title:
-          item.title ||
-          null,
-
-        episodeNo:
-          item.episodeNo ??
-          item.episode_number ??
-          item.episodeNumber ??
-          null,
-
-        duration:
-          item.duration ||
-          null,
-
-        webUrl:
-          item.webUrl ||
-          null,
-
-        stream:
-          parseStream(
-            item.stream
-          )
-      });
-    }
-
-    const next =
-      payload &&
-      typeof payload ===
-        "object"
-        ? payload.next
-        : null;
-
-    if (!next) {
-      break;
-    }
-
-    if (
-      seenTokens.has(
-        next
-      )
-    ) {
-      break;
-    }
-
-    seenTokens.add(
-      next
-    );
-
-    nextToken =
-      next;
+  if (episode.webUrl) {
+    possibleUrls.push(episode.webUrl);
   }
 
-  // Remove duplicates.
-  const seen =
-    new Set();
+  if (episode.url) {
+    possibleUrls.push(episode.url);
+  }
 
-  const clean =
-    episodes.filter(
-      episode => {
+  if (episode.web_url) {
+    possibleUrls.push(episode.web_url);
+  }
 
-        if (
-          seen.has(
-            episode.id
-          )
-        ) {
-          return false;
-        }
+  /*
+   * Build a likely page from title + ID when MX gives us
+   * an episode ID but no webUrl.
+   */
 
-        seen.add(
-          episode.id
-        );
+  if (episode.id && episode.title) {
+    const slug = String(episode.title)
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
 
-        return true;
-      }
+    possibleUrls.push(
+      `/show/watch-yeh-meri-family/season-2/${slug}-online-${episode.id}`
     );
+  }
 
-  return {
-    success: true,
+  for (const url of possibleUrls) {
+    const stream = await resolveStreamFromPage(url);
 
-    episodes:
-      clean
-  };
+    if (stream) {
+      return stream;
+    }
+  }
+
+  return null;
 }
 
-// ============================================================
-// RESOLVE EPISODE URL
-// ============================================================
+/*
+ * Main resolver for Yeh Meri Family.
+ */
 
-async function resolveEpisodeUrl(
-  webUrl
-) {
-  if (!webUrl) {
+async function resolveYmfEpisode(season, episode) {
+  const key = `tt8595766:${season}:${episode}`;
+
+  /*
+   * 1. Verified hardcoded stream.
+   */
+  if (KNOWN_STREAMS[key]) {
     return {
-      success: false,
-
-      error:
-        "Episode has no webUrl"
+      url: KNOWN_STREAMS[key],
+      method: "known-stream"
     };
   }
 
-  const seo =
-    await mxSeo(
-      webUrl
-    );
+  /*
+   * We currently have verified Season 2.
+   */
+  const show = KNOWN_SHOWS.tt8595766;
 
-  if (
-    !seo.success
-  ) {
-    return seo;
-  }
+  const seasonId = show?.seasons?.[season];
 
-  const data =
-    seo.data;
-
-  if (
-    !data.id
-  ) {
-    return {
-      success: false,
-
-      error:
-        "SEO did not return content ID",
-
-      seo
-    };
-  }
-
-  const id =
-    data.id;
-
-  const type =
-    data.type ||
-    "episode";
-
-  console.log(
-    "[EPISODE SEO]",
-    data.title,
-    id,
-    type
-  );
-
-  const detail =
-    await getVideoDetail(
-      id,
-      type
-    );
-
-  if (
-    !detail.success
-  ) {
-    return {
-      success: false,
-
-      error:
-        "Episode detail failed",
-
-      detail,
-
-      seo
-    };
-  }
-
-  return {
-    success: true,
-
-    id,
-
-    type,
-
-    title:
-      detail.data.title ||
-      data.title ||
-      null,
-
-    stream:
-      detail.stream,
-
-    detail:
-      detail.data,
-
-    seo:
-      data
-  };
-}
-
-// ============================================================
-// RESOLVE TARGET EPISODE
-// ============================================================
-
-async function resolveEpisode(
-  episode,
-  allEpisodes,
-  episodeNumber
-) {
-  // ----------------------------------------------------------
-  // 1. Stream already present in season response
-  // ----------------------------------------------------------
-
-  if (
-    episode.stream &&
-    episode.stream.hls
-  ) {
-
-    console.log(
-      "[STREAM] Season API already supplied HLS"
-    );
-
-    return {
-      success: true,
-
-      source:
-        "season-api",
-
-      id:
-        episode.id,
-
-      title:
-        episode.title,
-
-      stream:
-        episode.stream
-    };
-  }
-
-  // ----------------------------------------------------------
-  // 2. Episode webUrl → SEO → detail
-  // ----------------------------------------------------------
-
-  if (
-    episode.webUrl
-  ) {
-
-    console.log(
-      "[STREAM] Episode URL → SEO → detail"
-    );
-
-    const result =
-      await resolveEpisodeUrl(
-        episode.webUrl
-      );
-
-    if (
-      result.success &&
-      result.stream &&
-      result.stream.hls
-    ) {
-
-      return {
-        ...result,
-
-        source:
-          "episode-url-seo"
-      };
-    }
-
-    console.log(
-      "[STREAM] Episode SEO path did not return HLS"
-    );
-  }
-
-  // ----------------------------------------------------------
-  // 3. Direct episode ID → detail
-  // ----------------------------------------------------------
-
-  if (
-    episode.id
-  ) {
-
-    console.log(
-      "[STREAM] Direct episode detail"
-    );
-
-    const detail =
-      await getVideoDetail(
-        episode.id,
-        "episode"
-      );
-
-    if (
-      detail.success &&
-      detail.stream &&
-      detail.stream.hls
-    ) {
-
-      return {
-        success: true,
-
-        source:
-          "episode-detail",
-
-        id:
-          episode.id,
-
-        title:
-          detail.data.title ||
-          episode.title,
-
-        stream:
-          detail.stream,
-
-        detail:
-          detail.data
-      };
-    }
-
-    console.log(
-      "[STREAM] Direct detail did not return HLS"
-    );
-  }
-
-  // ----------------------------------------------------------
-  // 4. Previous episode → nextVideo
-  // ----------------------------------------------------------
-
-  if (
-    Number(
-      episodeNumber
-    ) > 1
-  ) {
-
-    const previous =
-      allEpisodes.find(
-        ep =>
-          Number(
-            ep.episodeNo
-          ) ===
-          Number(
-            episodeNumber
-          ) - 1
-      );
-
-    if (
-      previous &&
-      previous.id
-    ) {
-
-      console.log(
-        "[STREAM] Previous episode → nextVideo",
-        previous.id
-      );
-
-      const next =
-        await getNextVideo(
-          previous.id
-        );
-
-      if (
-        next.success
-      ) {
-
-        const data =
-          next.data;
-
-        const candidate =
-          extractNextEpisode(
-            data
-          );
-
-        if (
-          candidate
-        ) {
-
-          console.log(
-            "[NEXT VIDEO]",
-            JSON.stringify(
-              candidate
-            )
-          );
-
-          if (
-            candidate.webUrl
-          ) {
-
-            const resolved =
-              await resolveEpisodeUrl(
-                candidate.webUrl
-              );
-
-            if (
-              resolved.success &&
-              resolved.stream &&
-              resolved.stream.hls
-            ) {
-
-              return {
-                ...resolved,
-
-                source:
-                  "next-video-seo"
-              };
-            }
-          }
-
-          if (
-            candidate.id
-          ) {
-
-            const detail =
-              await getVideoDetail(
-                candidate.id,
-                candidate.type ||
-                  "episode"
-              );
-
-            if (
-              detail.success &&
-              detail.stream &&
-              detail.stream.hls
-            ) {
-
-              return {
-                success: true,
-
-                source:
-                  "next-video-detail",
-
-                id:
-                  candidate.id,
-
-                title:
-                  detail.data.title ||
-                  candidate.title ||
-                  episode.title,
-
-                stream:
-                  detail.stream,
-
-                detail:
-                  detail.data
-              };
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return {
-    success: false,
-
-    error:
-      "All episode resolution methods failed"
-  };
-}
-
-// ============================================================
-// NEXT VIDEO PARSER
-// ============================================================
-
-function extractNextEpisode(
-  root
-) {
-  if (
-    !root ||
-    typeof root !==
-      "object"
-  ) {
+  if (!seasonId) {
     return null;
   }
 
-  const candidates = [];
+  /*
+   * 2. Get the season list.
+   */
+  let list;
 
-  function add(
-    obj
-  ) {
-    if (
-      !obj ||
-      typeof obj !==
-        "object"
-    ) {
-      return;
-    }
-
-    const id =
-      obj.id ||
-      obj.contentId ||
-      obj.videoId;
-
-    if (!id) {
-      return;
-    }
-
-    candidates.push({
-      id,
-
-      type:
-        obj.type ||
-        "episode",
-
-      title:
-        obj.title ||
-        obj.name ||
-        null,
-
-      webUrl:
-        obj.webUrl ||
-        obj.url ||
-        null
-    });
+  try {
+    list = await seasonEpisodes(seasonId);
+  } catch {
+    list = [];
   }
 
-  add(root);
-  add(root.data);
-  add(root.nextVideo);
+  /*
+   * The season endpoint gives container/reference IDs.
+   * Do NOT assume those IDs are playable IDs.
+   */
 
-  if (
-    root.data
-  ) {
-    add(
-      root.data.nextVideo
-    );
-  }
+  const listedEpisode =
+    list.find((item) => {
+      const seq =
+        item.sequence ??
+        item.episodeNumber ??
+        item.episode_number;
 
-  if (
-    Array.isArray(
-      root.items
-    )
-  ) {
+      return Number(seq) === Number(episode);
+    }) ||
+    list[Number(episode) - 1];
 
-    for (
-      const item
-      of root.items
-    ) {
-      add(item);
+  /*
+   * 3. Try the episode's listed page first.
+   */
+  if (listedEpisode) {
+    const pageStream =
+      await resolveEpisodePageStream(listedEpisode);
+
+    if (pageStream) {
+      return {
+        url: pageStream,
+        method: "season-page"
+      };
     }
   }
 
-  if (
-    root.data &&
-    Array.isArray(
-      root.data.items
-    )
-  ) {
+  /*
+   * 4. Discover the real episode ID using nextVideo.
+   *
+   * For S2E2 we verified:
+   *
+   * season list ID
+   *   434578...
+   *
+   * nextVideo from E1
+   *   43d578...
+   */
 
-    for (
-      const item
-      of root.data.items
-    ) {
-      add(item);
-    }
+  let currentId = null;
+
+  if (episode === 1 && listedEpisode?.id) {
+    currentId = listedEpisode.id;
   }
 
-  return (
-    candidates[0] ||
-    null
-  );
-}
+  if (!currentId && episode > 1) {
+    const first =
+      list.find((item) => {
+        const seq =
+          item.sequence ??
+          item.episodeNumber ??
+          item.episode_number;
 
-// ============================================================
-// MAIN RESOLVER
-// ============================================================
+        return Number(seq) === 1;
+      }) || list[0];
 
-async function resolveSeries(
-  imdbId,
-  seasonNumber,
-  episodeNumber
-) {
-  const cacheKey =
-    `${imdbId}:${seasonNumber}:${episodeNumber}`;
+    currentId = first?.id || null;
 
-  console.log(
-    "\n=========================================="
-  );
+    if (currentId) {
+      for (let n = 2; n <= episode; n++) {
+        try {
+          const response = await nextVideo(currentId);
 
-  console.log(
-    "[RESOLVE]",
-    cacheKey
-  );
+          const next = extractEpisodeObject(response);
 
-  console.log(
-    "=========================================="
-  );
+          if (!next?.id) {
+            break;
+          }
 
-  // ----------------------------------------------------------
-  // VERIFIED S2E1
-  // ----------------------------------------------------------
+          currentId = next.id;
 
-  if (
-    KNOWN_STREAMS[
-      cacheKey
-    ]
-  ) {
+          /*
+           * If this is the requested episode, immediately
+           * try its webpage.
+           */
+          if (n === episode) {
+            const stream =
+              await resolveEpisodePageStream(next);
 
-    return {
-      success: true,
+            if (stream) {
+              return {
+                url: stream,
+                method: "nextVideo-page"
+              };
+            }
 
-      source:
-        "verified-browser-stream",
+            /*
+             * The nextVideo object may contain the actual
+             * webUrl under a nested structure.
+             */
+            const webUrl = extractWebUrl(response);
 
-      imdbId,
+            if (webUrl) {
+              const webStream =
+                await resolveStreamFromPage(webUrl);
 
-      season:
-        seasonNumber,
-
-      episode:
-        episodeNumber,
-
-      title:
-        "Yeh Meri Family",
-
-      episodeTitle:
-        "Apna Kamra",
-
-      hls:
-        KNOWN_STREAMS[
-          cacheKey
-        ]
-    };
-  }
-
-  // ----------------------------------------------------------
-  // SHOW
-  // ----------------------------------------------------------
-
-  const showResult =
-    await resolveShow(
-      imdbId
-    );
-
-  if (
-    !showResult.success
-  ) {
-
-    return {
-      success: false,
-
-      error:
-        "Could not resolve MX show",
-
-      imdbId,
-
-      season:
-        seasonNumber,
-
-      episode:
-        episodeNumber,
-
-      detail:
-        showResult
-    };
-  }
-
-  const show =
-    showResult.show;
-
-  console.log(
-    "[SHOW]",
-    show.title,
-    show.webUrl
-  );
-
-  // ----------------------------------------------------------
-  // SEASON
-  // ----------------------------------------------------------
-
-  let season = null;
-
-  // Known exact season.
-  if (
-    KNOWN_SHOWS[
-      imdbId
-    ] &&
-    KNOWN_SHOWS[
-      imdbId
-    ].seasons &&
-    KNOWN_SHOWS[
-      imdbId
-    ].seasons[
-      String(
-        seasonNumber
-      )
-    ]
-  ) {
-
-    season =
-      KNOWN_SHOWS[
-        imdbId
-      ].seasons[
-        String(
-          seasonNumber
-        )
-      ];
-
-    console.log(
-      "[SEASON] Using known season:",
-      season.id
-    );
-  }
-
-  // ----------------------------------------------------------
-  // If not known, SEO-resolve the show page.
-  // ----------------------------------------------------------
-
-  if (!season) {
-
-    const seo =
-      await mxSeo(
-        show.webUrl
-      );
-
-    if (
-      seo.success
-    ) {
-
-      const data =
-        seo.data;
-
-      const dependency =
-        data.dependencies &&
-        data.dependencies.season;
-
-      if (
-        dependency &&
-        dependency.id
-      ) {
-
-        const dependencyNo =
-          Number(
-            dependency.season_no ??
-            dependency.seasonNo ??
-            dependency.sequence
-          );
-
-        if (
-          !Number.isFinite(
-            dependencyNo
-          ) ||
-          dependencyNo ===
-            Number(
-              seasonNumber
-            )
-        ) {
-
-          season = {
-            id:
-              dependency.id,
-
-            name:
-              dependency.name ||
-              `Season ${seasonNumber}`,
-
-            seasonNo:
-              Number.isFinite(
-                dependencyNo
-              )
-                ? dependencyNo
-                : Number(
-                    seasonNumber
-                  ),
-
-            webUrl:
-              dependency.url ||
-              null
-          };
+              if (webStream) {
+                return {
+                  url: webStream,
+                  method: "nextVideo-webUrl"
+                };
+              }
+            }
+          }
+        } catch {
+          break;
         }
       }
     }
   }
 
-  if (!season) {
+  /*
+   * 5. Direct detail as a final normal API attempt.
+   */
+  if (currentId) {
+    try {
+      const detail = await detailVideo(currentId);
 
-    return {
-      success: false,
+      /*
+       * Search the complete response for an HLS URL.
+       */
+      const text = safeJson(detail);
 
-      error:
-        `Could not resolve Season ${seasonNumber}`,
+      const urls = extractHlsUrls(text);
 
-      show
-    };
+      const stream = chooseBestHls(urls);
+
+      if (stream) {
+        return {
+          url: stream,
+          method: "detail-api"
+        };
+      }
+
+      const detailObject = extractEpisodeObject(detail);
+
+      const pageStream =
+        await resolveEpisodePageStream(detailObject);
+
+      if (pageStream) {
+        return {
+          url: pageStream,
+          method: "detail-page"
+        };
+      }
+    } catch {}
   }
 
-  console.log(
-    "[SEASON]",
-    season.id
-  );
-
-  // ----------------------------------------------------------
-  // EPISODES
-  // ----------------------------------------------------------
-
-  const episodeResult =
-    await getSeasonEpisodes(
-      season.id
-    );
-
-  if (
-    !episodeResult.success
-  ) {
-
-    return {
-      success: false,
-
-      error:
-        episodeResult.error,
-
-      season,
-
-      detail:
-        episodeResult
-    };
-  }
-
-  const episodes =
-    episodeResult.episodes;
-
-  console.log(
-    "[EPISODES]",
-    episodes.length
-  );
-
-  for (
-    const ep
-    of episodes
-  ) {
-
-    console.log(
-      "[EP]",
-      ep.episodeNo,
-      "|",
-      ep.title,
-      "|",
-      ep.id,
-      "|",
-      ep.webUrl,
-      "|",
-      ep.stream.hls
-        ? "HLS"
-        : "NO HLS"
-    );
-  }
-
-  // ----------------------------------------------------------
-  // FIND EXACT EPISODE
-  // ----------------------------------------------------------
-
-  let episode =
-    episodes.find(
-      ep =>
-        Number(
-          ep.episodeNo
-        ) ===
-        Number(
-          episodeNumber
-        )
-    );
-
-  // Fallback to position.
-  if (!episode) {
-
-    const index =
-      Number(
-        episodeNumber
-      ) - 1;
-
-    if (
-      index >= 0 &&
-      index <
-        episodes.length
-    ) {
-
-      episode =
-        episodes[index];
-    }
-  }
-
-  if (!episode) {
-
-    return {
-      success: false,
-
-      error:
-        `Episode ${episodeNumber} not found`,
-
-      season,
-
-      episodes
-    };
-  }
-
-  console.log(
-    "[TARGET]",
-    episode.episodeNo,
-    episode.title,
-    episode.id
-  );
-
-  // ----------------------------------------------------------
-  // RESOLVE
-  // ----------------------------------------------------------
-
-  const resolved =
-    await resolveEpisode(
-      episode,
-      episodes,
-      episodeNumber
-    );
-
-  if (
-    !resolved.success ||
-    !resolved.stream ||
-    !resolved.stream.hls
-  ) {
-
-    return {
-      success: false,
-
-      error:
-        `MX stream unavailable for ${show.title} S${seasonNumber}E${episodeNumber}`,
-
-      show: {
-        id:
-          show.id,
-
-        title:
-          show.title,
-
-        webUrl:
-          show.webUrl
-      },
-
-      season,
-
-      episode: {
-        id:
-          episode.id,
-
-        episodeNo:
-          episode.episodeNo,
-
-        title:
-          episode.title,
-
-        webUrl:
-          episode.webUrl
-      },
-
-      attempted:
-        [
-          "season API stream",
-          "episode webUrl → SEO → detail",
-          "direct episode detail",
-          "previous episode → nextVideo"
-        ]
-    };
-  }
-
-  return {
-    success: true,
-
-    source:
-      resolved.source,
-
-    imdbId,
-
-    title:
-      show.title,
-
-    season:
-      Number(
-        seasonNumber
-      ),
-
-    seasonId:
-      season.id,
-
-    episode:
-      Number(
-        episodeNumber
-      ),
-
-    episodeId:
-      resolved.id ||
-      episode.id,
-
-    episodeTitle:
-      resolved.title ||
-      episode.title,
-
-    hls:
-      resolved.stream.hls,
-
-    dash:
-      resolved.stream.dash,
-
-    videoHash:
-      resolved.stream.videoHash,
-
-    provider:
-      resolved.stream.provider,
-
-    drmProtect:
-      resolved.stream.drmProtect
-  };
+  return null;
 }
 
-// ============================================================
-// MANIFEST
-// ============================================================
+/*
+ * Generic resolver.
+ */
+
+async function resolveStream(videoId) {
+  /*
+   * IMDb movie:
+   * tt1234567
+   *
+   * Series:
+   * tt1234567:2:3
+   */
+
+  const match = String(videoId).match(
+    /^(tt\d+):(\d+):(\d+)$/
+  );
+
+  if (match) {
+    const imdbId = match[1];
+    const season = Number(match[2]);
+    const episode = Number(match[3]);
+
+    /*
+     * Yeh Meri Family.
+     */
+    if (imdbId === "tt8595766") {
+      return resolveYmfEpisode(season, episode);
+    }
+  }
+
+  /*
+   * Known direct stream fallback.
+   */
+  if (KNOWN_STREAMS[videoId]) {
+    return {
+      url: KNOWN_STREAMS[videoId],
+      method: "known-stream"
+    };
+  }
+
+  return null;
+}
+
+/*
+ * =========================
+ * STREMIO MANIFEST
+ * =========================
+ */
 
 const manifest = {
-  id:
-    "com.my.stremio.video",
-
-  version:
-    VERSION,
-
-  name:
-    "MX Player Resolver",
-
+  id: "com.my.stremio.video",
+  version: VERSION,
+  name: "MX Player Resolver",
   description:
-    "Resolves MX Player streams for testing.",
-
+    "Resolves playable MX Player HLS streams for supported titles.",
   resources: [
     {
-      name:
-        "stream",
-
-      types:
-        [
-          "movie",
-          "series"
-        ],
-
-      idPrefixes:
-        ["tt"]
+      name: "stream",
+      types: ["movie", "series"],
+      idPrefixes: ["tt"]
     }
   ],
-
-  types:
-    [
-      "movie",
-      "series"
-    ],
-
-  catalogs:
-    []
+  types: ["movie", "series"],
+  catalogs: []
 };
 
-// ============================================================
-// CORS
-// ============================================================
+/*
+ * Root
+ */
 
-app.use(
-  (req, res, next) => {
+app.get("/", (req, res) => {
+  res.json({
+    addon: "MX Player Resolver",
+    version: VERSION,
+    status: "online"
+  });
+});
 
-    res.setHeader(
-      "Access-Control-Allow-Origin",
-      "*"
-    );
+/*
+ * Health
+ */
 
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "*"
-    );
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    version: VERSION
+  });
+});
 
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET,POST,OPTIONS"
-    );
+/*
+ * Manifest
+ */
 
-    res.setHeader(
-      "X-Addon-Version",
-      VERSION
-    );
+app.get("/manifest.json", (req, res) => {
+  res.json(manifest);
+});
 
-    if (
-      req.method ===
-        "OPTIONS"
-    ) {
-      return res.sendStatus(
-        204
-      );
-    }
+/*
+ * Stremio stream endpoint
+ */
 
-    next();
-  }
-);
+app.get("/stream/:type/:videoId.json", async (req, res) => {
+  const { type, videoId } = req.params;
 
-// ============================================================
-// ROOT
-// ============================================================
+  console.log(
+    `[STREAM] type=${type} videoId=${videoId}`
+  );
 
-app.get(
-  "/",
-  (req, res) => {
+  try {
+    const result = await resolveStream(videoId);
 
-    res.json({
-      addon:
-        "MX Player Resolver",
-
-      version:
-        VERSION,
-
-      status:
-        "ok"
-    });
-  }
-);
-
-// ============================================================
-// HEALTH
-// ============================================================
-
-app.get(
-  "/health",
-  (req, res) => {
-
-    res.json({
-      ok:
-        true,
-
-      addon:
-        "MX Player Resolver",
-
-      version:
-        VERSION
-    });
-  }
-);
-
-// ============================================================
-// MANIFEST
-// ============================================================
-
-app.get(
-  "/manifest.json",
-  (req, res) => {
-    res.json(
-      manifest
-    );
-  }
-);
-
-// ============================================================
-// STREMIO STREAM
-// ============================================================
-
-app.get(
-  "/stream/:type/:videoId",
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      const type =
-        req.params.type;
-
-      const videoId =
-        decodeURIComponent(
-          req.params.videoId
-        );
-
+    if (!result?.url) {
       console.log(
-        "[STREMIO]",
-        type,
-        videoId
-      );
-
-      if (
-        type !== "series"
-      ) {
-
-        return res.json({
-          streams:
-            []
-        });
-      }
-
-      const parts =
-        videoId.split(":");
-
-      if (
-        parts.length <
-          3
-      ) {
-
-        return res.json({
-          streams:
-            []
-        });
-      }
-
-      const imdbId =
-        parts[0];
-
-      const season =
-        Number(
-          parts[1]
-        );
-
-      const episode =
-        Number(
-          parts[2]
-        );
-
-      if (
-        !/^tt\d+$/.test(
-          imdbId
-        ) ||
-        !Number.isFinite(
-          season
-        ) ||
-        !Number.isFinite(
-          episode
-        )
-      ) {
-
-        return res.json({
-          streams:
-            []
-        });
-      }
-
-      const result =
-        await resolveSeries(
-          imdbId,
-          season,
-          episode
-        );
-
-      if (
-        !result.success ||
-        !result.hls
-      ) {
-
-        console.log(
-          "[NO STREAM]",
-          JSON.stringify(
-            result,
-            null,
-            2
-          )
-        );
-
-        return res.json({
-          streams:
-            []
-        });
-      }
-
-      return res.json({
-        streams: [
-          {
-            name:
-              "MX Player",
-
-            title:
-              result.episodeTitle
-                ? `${result.episodeTitle} • MX Player`
-                : "MX Player",
-
-            url:
-              result.hls,
-
-            behaviorHints: {
-              notWebReady:
-                true,
-
-              bingeGroup:
-                `mx-${imdbId}-s${season}`
-            }
-          }
-        ]
-      });
-
-    } catch (
-      error
-    ) {
-
-      console.error(
-        "[STREAM ERROR]",
-        error
+        `[STREAM] No stream found for ${videoId}`
       );
 
       return res.json({
-        streams:
-          []
+        streams: []
       });
     }
-  }
-);
-
-// ============================================================
-// DEBUG: SERIES
-// ============================================================
-
-app.get(
-  "/debug/series/:videoId",
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      const videoId =
-        decodeURIComponent(
-          req.params.videoId
-        );
-
-      const parts =
-        videoId.split(":");
-
-      const result =
-        await resolveSeries(
-          parts[0],
-          Number(parts[1]),
-          Number(parts[2])
-        );
-
-      res.json(
-        result
-      );
-
-    } catch (
-      error
-    ) {
-
-      res.status(
-        500
-      ).json({
-        success:
-          false,
-
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-// ============================================================
-// DEBUG: SEASON EPISODES
-// ============================================================
-
-app.get(
-  "/debug/episodes/:seasonId",
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      const result =
-        await getSeasonEpisodes(
-          req.params.seasonId
-        );
-
-      res.json(
-        result
-      );
-
-    } catch (
-      error
-    ) {
-
-      res.status(
-        500
-      ).json({
-        success:
-          false,
-
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-// ============================================================
-// DEBUG: DETAIL
-// ============================================================
-
-app.get(
-  "/debug/detail/:id",
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      const result =
-        await getVideoDetail(
-          req.params.id,
-          "episode"
-        );
-
-      res.json(
-        result
-      );
-
-    } catch (
-      error
-    ) {
-
-      res.status(
-        500
-      ).json({
-        success:
-          false,
-
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-// ============================================================
-// DEBUG: NEXT VIDEO
-// ============================================================
-
-app.get(
-  "/debug/next/:id",
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      const result =
-        await getNextVideo(
-          req.params.id
-        );
-
-      res.json(
-        result
-      );
-
-    } catch (
-      error
-    ) {
-
-      res.status(
-        500
-      ).json({
-        success:
-          false,
-
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-// ============================================================
-// DEBUG: SEO
-// ============================================================
-
-app.get(
-  "/debug/seo",
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      if (
-        !req.query.url
-      ) {
-
-        return res.status(
-          400
-        ).json({
-          success:
-            false,
-
-          error:
-            "Use ?url=https://www.mxplayer.in/..."
-        });
-      }
-
-      const result =
-        await mxSeo(
-          req.query.url
-        );
-
-      res.json(
-        result
-      );
-
-    } catch (
-      error
-    ) {
-
-      res.status(
-        500
-      ).json({
-        success:
-          false,
-
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-// ============================================================
-// START
-// ============================================================
-
-app.listen(
-  PORT,
-  () => {
 
     console.log(
-      `MX Player Resolver v${VERSION} running on port ${PORT}`
+      `[STREAM] Found via ${result.method}: ${result.url}`
     );
 
-    console.log(
-      "Anonymous user:",
-      USER_ID
+    res.json({
+      streams: [
+        {
+          name: "MX Player",
+          title: "MX Player HLS",
+          url: result.url,
+          notWebReady: true
+        }
+      ]
+    });
+  } catch (error) {
+    console.error(
+      `[STREAM ERROR] ${videoId}`,
+      error
     );
+
+    res.json({
+      streams: []
+    });
   }
-);
+});
+
+/*
+ * =========================
+ * DEBUG ROUTES
+ * =========================
+ */
+
+/*
+ * Debug series
+ */
+
+app.get("/debug/series/:videoId", async (req, res) => {
+  try {
+    const videoId = req.params.videoId;
+
+    if (videoId === "tt8595766") {
+      return res.json({
+        success: true,
+        source: "known-show",
+        data: KNOWN_SHOWS.tt8595766
+      });
+    }
+
+    const result = await searchMx(videoId);
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: error.status || null,
+      raw: error.raw || null
+    });
+  }
+});
+
+/*
+ * Debug season episodes
+ */
+
+app.get("/debug/episodes/:seasonId", async (req, res) => {
+  try {
+    const data =
+      await seasonEpisodes(req.params.seasonId);
+
+    res.json({
+      success: true,
+      count: data.length,
+      data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: error.status || null,
+      raw: error.raw || null
+    });
+  }
+});
+
+/*
+ * Debug detail
+ */
+
+app.get("/debug/detail/:id", async (req, res) => {
+  try {
+    const data =
+      await detailVideo(req.params.id);
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: error.status || null,
+      raw: error.raw || null
+    });
+  }
+});
+
+/*
+ * Debug nextVideo
+ */
+
+app.get("/debug/next/:id", async (req, res) => {
+  try {
+    const data =
+      await nextVideo(req.params.id);
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: error.status || null,
+      raw: error.raw || null
+    });
+  }
+});
+
+/*
+ * Debug SEO
+ */
+
+app.get("/debug/seo", async (req, res) => {
+  try {
+    if (!req.query.url) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing ?url="
+      });
+    }
+
+    const data =
+      await mxSeo(req.query.url);
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: error.status || null,
+      raw: error.raw || null
+    });
+  }
+});
+
+/*
+ * Debug actual MX webpage stream extraction.
+ */
+
+app.get("/debug/page-stream", async (req, res) => {
+  try {
+    if (!req.query.url) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing ?url="
+      });
+    }
+
+    const page = await fetchMxPage(req.query.url);
+    const urls = extractHlsUrls(page.text);
+
+    res.json({
+      success: true,
+      status: page.status,
+      pageUrl: page.url,
+      count: urls.length,
+      streams: urls,
+      selected: chooseBestHls(urls)
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/*
+ * Debug full resolver.
+ */
+
+app.get("/debug/resolve/:videoId", async (req, res) => {
+  try {
+    const result =
+      await resolveStream(req.params.videoId);
+
+    res.json({
+      success: !!result,
+      videoId: req.params.videoId,
+      result
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      videoId: req.params.videoId,
+      error: error.message
+    });
+  }
+});
+
+/*
+ * Start
+ */
+
+app.listen(PORT, HOST, () => {
+  console.log(
+    `MX Player Resolver v${VERSION} listening on ${HOST}:${PORT}`
+  );
+});
