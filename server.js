@@ -12,7 +12,7 @@ const MX_SEO = "https://seo.mxplayer.in/v1/api/seo";
 const CINEMETA = "https://v3-cinemeta.strem.io";
 const CDN = "https://d3sgzbosmwirao.cloudfront.net";
 
-const VERSION = "15.0.0";
+const VERSION = "16.0.0";
 const MX_USER_ID = crypto.randomUUID();
 
 const MX_HEADERS = {
@@ -26,16 +26,12 @@ const MX_HEADERS = {
 
 
 /* ============================================================
-   HTTP
+   HTTP / MX API
    ============================================================ */
 
 async function requestText(url, options = {}, timeout = 20000) {
   const controller = new AbortController();
-
-  const timer = setTimeout(
-    () => controller.abort(),
-    timeout
-  );
+  const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
     const response = await fetch(url, {
@@ -75,10 +71,6 @@ async function requestJson(url, options = {}, timeout = 20000) {
 }
 
 
-/* ============================================================
-   MX REQUESTS
-   ============================================================ */
-
 function mxDefaults() {
   return {
     "device-density": "2",
@@ -98,7 +90,10 @@ async function mxGet(path, params = {}) {
     ...params
   })) {
     if (value !== undefined && value !== null) {
-      url.searchParams.set(key, String(value));
+      url.searchParams.set(
+        key,
+        String(value)
+      );
     }
   }
 
@@ -124,7 +119,10 @@ async function mxPost(
     ...params
   })) {
     if (value !== undefined && value !== null) {
-      url.searchParams.set(key, String(value));
+      url.searchParams.set(
+        key,
+        String(value)
+      );
     }
   }
 
@@ -141,10 +139,6 @@ async function mxPost(
   );
 }
 
-
-/* ============================================================
-   MX SEO
-   ============================================================ */
 
 function mxUrlPath(value) {
   if (!value) return null;
@@ -163,21 +157,26 @@ function mxUrlPath(value) {
 
 
 async function mxSeo(value) {
-  const path = mxUrlPath(value);
+  const path =
+    mxUrlPath(value);
 
   if (!path) return null;
 
-  const url = new URL(
-    `${MX_SEO}/get-url-details`
-  );
+  const url =
+    new URL(
+      `${MX_SEO}/get-url-details`
+    );
 
-  for (const [key, value2] of Object.entries({
-    ...mxDefaults(),
-    url: path
-  })) {
+  for (
+    const [key, val]
+    of Object.entries({
+      ...mxDefaults(),
+      url: path
+    })
+  ) {
     url.searchParams.set(
       key,
-      String(value2)
+      String(val)
     );
   }
 
@@ -191,17 +190,75 @@ async function mxSeo(value) {
 }
 
 
+/*
+ * V16:
+ *
+ * MX page URL
+ *      ↓
+ * SEO
+ *      ↓
+ * data.id + data.type
+ *      ↓
+ * detail/video
+ */
+async function resolveMxUrl(value) {
+  const seo =
+    await mxSeo(value);
+
+  const data =
+    seo?.data ||
+    seo?.result ||
+    seo;
+
+  if (!data) {
+    throw new Error(
+      "MX SEO returned no data"
+    );
+  }
+
+  const id =
+    data.id;
+
+  const type =
+    String(
+      data.type || ""
+    ).toLowerCase();
+
+  if (!id || !type) {
+    throw new Error(
+      "MX SEO returned no usable id/type"
+    );
+  }
+
+  return {
+    id: String(id),
+    type,
+    title:
+      data.title ||
+      data.display_title ||
+      data.displayTitle ||
+      null,
+    seo
+  };
+}
+
+
 /* ============================================================
    CINEMETA
    ============================================================ */
 
-async function cinemeta(type, id) {
+async function cinemeta(
+  type,
+  id
+) {
   return requestJson(
     `${CINEMETA}/meta/${type}/${encodeURIComponent(id)}.json`,
     {
       headers: {
-        "User-Agent": "Mozilla/5.0",
-        Accept: "application/json"
+        "User-Agent":
+          "Mozilla/5.0",
+        Accept:
+          "application/json"
       }
     }
   );
@@ -209,27 +266,41 @@ async function cinemeta(type, id) {
 
 
 /* ============================================================
-   GENERIC OBJECT HELPERS
+   GENERAL HELPERS
    ============================================================ */
 
 function normalizeTitle(value) {
   return String(value || "")
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .replace(
+      /[^a-z0-9]+/g,
+      " "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
     .trim();
 }
 
 
 function titleScore(a, b) {
-  const x = normalizeTitle(a);
-  const y = normalizeTitle(b);
+  const x =
+    normalizeTitle(a);
+
+  const y =
+    normalizeTitle(b);
 
   if (!x || !y) return 0;
 
-  if (x === y) return 100;
+  if (x === y) {
+    return 100;
+  }
 
   if (
     x.includes(y) ||
@@ -238,19 +309,34 @@ function titleScore(a, b) {
     return 85;
   }
 
-  const ax = new Set(x.split(" "));
-  const ay = new Set(y.split(" "));
+  const ax =
+    new Set(
+      x.split(" ")
+    );
+
+  const ay =
+    new Set(
+      y.split(" ")
+    );
 
   let common = 0;
 
-  for (const word of ax) {
+  for (
+    const word of ax
+  ) {
     if (ay.has(word)) {
       common++;
     }
   }
 
   return Math.round(
-    (common / Math.max(ax.size, ay.size)) * 70
+    (
+      common /
+      Math.max(
+        ax.size,
+        ay.size
+      )
+    ) * 70
   );
 }
 
@@ -262,20 +348,27 @@ function collectObjects(
 ) {
   if (
     !value ||
-    typeof value !== "object"
+    typeof value !==
+      "object"
   ) {
     return output;
   }
 
-  if (seen.has(value)) {
+  if (
+    seen.has(value)
+  ) {
     return output;
   }
 
   seen.add(value);
   output.push(value);
 
-  if (Array.isArray(value)) {
-    for (const item of value) {
+  if (
+    Array.isArray(value)
+  ) {
+    for (
+      const item of value
+    ) {
       collectObjects(
         item,
         output,
@@ -283,10 +376,14 @@ function collectObjects(
       );
     }
   } else {
-    for (const child of Object.values(value)) {
+    for (
+      const child
+      of Object.values(value)
+    ) {
       if (
         child &&
-        typeof child === "object"
+        typeof child ===
+          "object"
       ) {
         collectObjects(
           child,
@@ -312,23 +409,26 @@ function objectType(obj) {
 
 
 function objectWebUrl(obj) {
-  const keys = [
-    "webUrl",
-    "webURL",
-    "web_url",
-    "url",
-    "canonicalUrl",
-    "canonicalURL"
-  ];
-
-  for (const key of keys) {
+  for (
+    const key of [
+      "webUrl",
+      "webURL",
+      "web_url",
+      "url",
+      "canonicalUrl",
+      "canonicalURL"
+    ]
+  ) {
     if (
-      obj &&
-      obj[key] !== undefined &&
-      obj[key] !== null
+      obj?.[key] !==
+        undefined &&
+      obj?.[key] !==
+        null
     ) {
       const value =
-        String(obj[key]).trim();
+        String(
+          obj[key]
+        ).trim();
 
       if (value) {
         return value;
@@ -341,17 +441,22 @@ function objectWebUrl(obj) {
 
 
 /* ============================================================
-   MX SEARCH
+   SEARCH
    ============================================================ */
 
-async function mxSearchRaw(query) {
-  const data = await mxPost(
-    "/search/resultv2",
-    { query },
-    {}
-  );
+async function mxSearchRaw(
+  query
+) {
+  const data =
+    await mxPost(
+      "/search/resultv2",
+      { query },
+      {}
+    );
 
-  return collectObjects(data).filter(
+  return collectObjects(
+    data
+  ).filter(
     item => {
       const type =
         objectType(item);
@@ -371,34 +476,53 @@ async function mxSearchRaw(query) {
 }
 
 
-async function mxSearch(query) {
+async function mxSearch(
+  query
+) {
   const results =
-    await mxSearchRaw(query);
+    await mxSearchRaw(
+      query
+    );
 
-  const map = new Map();
+  const map =
+    new Map();
 
-  for (const item of results) {
+  for (
+    const item of results
+  ) {
     const key =
       `${objectType(item)}:${item.id}`;
 
-    if (!map.has(key)) {
-      map.set(key, item);
+    if (
+      !map.has(key)
+    ) {
+      map.set(
+        key,
+        item
+      );
     }
   }
 
-  return [...map.values()];
+  return [
+    ...map.values()
+  ];
 }
 
 
-async function mxHomeSearch(query) {
-  const data = await mxGet(
-    "/home/tab/87c3ddc974dcf12294e9412bec44b097",
-    {
-      pageSize: "50"
-    }
-  );
+async function mxHomeSearch(
+  query
+) {
+  const data =
+    await mxGet(
+      "/home/tab/87c3ddc974dcf12294e9412bec44b097",
+      {
+        pageSize: "50"
+      }
+    );
 
-  return collectObjects(data).filter(
+  return collectObjects(
+    data
+  ).filter(
     item => {
       const type =
         objectType(item);
@@ -420,59 +544,54 @@ async function mxHomeSearch(query) {
 }
 
 
-/* ============================================================
-   PICK MOVIE / SHOW
-   ============================================================ */
-
 function pickMovie(
   results,
   title,
   year
 ) {
-  const movies =
-    results.filter(
-      item =>
-        objectType(item) === "movie"
-    );
-
   const scored =
-    movies.map(item => {
-      let score =
-        titleScore(
-          item.title,
-          title
-        );
+    results
+      .filter(
+        item =>
+          objectType(item) ===
+          "movie"
+      )
+      .map(item => {
+        let score =
+          titleScore(
+            item.title,
+            title
+          );
 
-      const itemYear =
-        item.releaseDate
-          ? String(
-              item.releaseDate
-            ).slice(0, 4)
-          : item.year
+        const itemYear =
+          item.releaseDate
             ? String(
-                item.year
+                item.releaseDate
               ).slice(0, 4)
-            : null;
+            : item.year
+              ? String(
+                  item.year
+                ).slice(0, 4)
+              : null;
 
-      if (
-        year &&
-        itemYear &&
-        String(year).slice(0, 4) ===
-          itemYear
-      ) {
-        score += 25;
-      }
+        if (
+          year &&
+          itemYear &&
+          String(year).slice(0, 4) ===
+            itemYear
+        ) {
+          score += 25;
+        }
 
-      return {
-        item,
-        score
-      };
-    });
-
-  scored.sort(
-    (a, b) =>
-      b.score - a.score
-  );
+        return {
+          item,
+          score
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.score - a.score
+      );
 
   return (
     scored.length &&
@@ -487,26 +606,25 @@ function pickShow(
   results,
   title
 ) {
-  const shows =
-    results.filter(
-      item =>
-        objectType(item) === "tvshow"
-    );
-
   const scored =
-    shows.map(item => ({
-      item,
-      score:
-        titleScore(
-          item.title,
-          title
-        )
-    }));
-
-  scored.sort(
-    (a, b) =>
-      b.score - a.score
-  );
+    results
+      .filter(
+        item =>
+          objectType(item) ===
+          "tvshow"
+      )
+      .map(item => ({
+        item,
+        score:
+          titleScore(
+            item.title,
+            title
+          )
+      }))
+      .sort(
+        (a, b) =>
+          b.score - a.score
+      );
 
   return (
     scored.length &&
@@ -518,7 +636,7 @@ function pickShow(
 
 
 /* ============================================================
-   MX PAGE / __mxs__
+   SHOW PAGE / SEASONS
    ============================================================ */
 
 function extractBalancedJson(
@@ -535,7 +653,6 @@ function extractBalancedJson(
     return null;
   }
 
-  const opening = first;
   const closing =
     first === "{"
       ? "}"
@@ -550,7 +667,8 @@ function extractBalancedJson(
     i < text.length;
     i++
   ) {
-    const ch = text[i];
+    const ch =
+      text[i];
 
     if (inString) {
       if (escaped) {
@@ -573,7 +691,9 @@ function extractBalancedJson(
       continue;
     }
 
-    if (ch === opening) {
+    if (
+      ch === first
+    ) {
       depth++;
     } else if (
       ch === closing
@@ -593,13 +713,15 @@ function extractBalancedJson(
 }
 
 
-function extractMxsState(html) {
-  const patterns = [
-    /window\.__mxs__\s*=\s*/,
-    /__mxs__\s*=\s*/
-  ];
-
-  for (const pattern of patterns) {
+function extractMxsState(
+  html
+) {
+  for (
+    const pattern of [
+      /window\.__mxs__\s*=\s*/,
+      /__mxs__\s*=\s*/
+    ]
+  ) {
     const match =
       pattern.exec(html);
 
@@ -634,7 +756,9 @@ function extractMxsState(html) {
       }
 
       try {
-        return JSON.parse(json);
+        return JSON.parse(
+          json
+        );
       } catch {
         break;
       }
@@ -645,9 +769,13 @@ function extractMxsState(html) {
 }
 
 
-async function fetchMxPage(webUrl) {
+async function fetchMxPage(
+  webUrl
+) {
   const fullUrl =
-    String(webUrl).startsWith("http")
+    String(webUrl).startsWith(
+      "http"
+    )
       ? String(webUrl)
       : `https://www.mxplayer.in${webUrl}`;
 
@@ -657,7 +785,9 @@ async function fetchMxPage(webUrl) {
       {
         headers: {
           "User-Agent":
-            MX_HEADERS["User-Agent"],
+            MX_HEADERS[
+              "User-Agent"
+            ],
           Referer:
             "https://www.mxplayer.in/"
         }
@@ -668,32 +798,34 @@ async function fetchMxPage(webUrl) {
     fullUrl,
     html,
     state:
-      extractMxsState(html)
+      extractMxsState(
+        html
+      )
   };
 }
 
 
-/* ============================================================
-   SEASON HELPERS
-   ============================================================ */
-
-function parseSeasonNumber(item) {
-  const values = [
-    item?.sequence,
-    item?.season_number,
-    item?.seasonNo,
-    item?.seasonNumber,
-    item?.number,
-    item?.index
-  ];
-
-  for (const value of values) {
+function parseSeasonNumber(
+  item
+) {
+  for (
+    const value of [
+      item?.sequence,
+      item?.season_number,
+      item?.seasonNo,
+      item?.seasonNumber,
+      item?.number,
+      item?.index
+    ]
+  ) {
     if (
-      value !== undefined &&
+      value !==
+        undefined &&
       value !== null &&
       String(value).trim()
     ) {
-      const n = Number(value);
+      const n =
+        Number(value);
 
       if (
         Number.isFinite(n) &&
@@ -725,50 +857,54 @@ function parseSeasonNumber(item) {
 }
 
 
-function findSeasonObjects(state) {
-  const seasons = [];
+function findSeasonObjects(
+  state
+) {
+  const map =
+    new Map();
 
   for (
-    const item of collectObjects(state)
+    const item of
+      collectObjects(state)
   ) {
     if (
-      objectType(item) !== "season"
+      objectType(item) !==
+        "season" ||
+      !item.id
     ) {
       continue;
     }
 
-    if (!item.id) {
-      continue;
-    }
-
     const number =
-      parseSeasonNumber(item);
+      parseSeasonNumber(
+        item
+      );
 
     if (!number) {
       continue;
     }
 
-    seasons.push({
-      id: String(item.id),
-      title:
-        item.title ||
-        item.name ||
-        `Season ${number}`,
-      number,
-      webUrl:
-        objectWebUrl(item)
-    });
-  }
-
-  const map = new Map();
-
-  for (const season of seasons) {
     if (
-      !map.has(season.number)
+      !map.has(number)
     ) {
       map.set(
-        season.number,
-        season
+        number,
+        {
+          id:
+            String(item.id),
+
+          title:
+            item.title ||
+            item.name ||
+            `Season ${number}`,
+
+          number,
+
+          webUrl:
+            objectWebUrl(
+              item
+            )
+        }
       );
     }
   }
@@ -782,122 +918,117 @@ function findSeasonObjects(state) {
 }
 
 
-function extractSeoDependencies(
+function extractSeoSeasons(
   seo
 ) {
-  const roots = [
-    seo,
-    seo?.data,
-    seo?.result
-  ].filter(Boolean);
-
-  const all = [];
-
-  for (const root of roots) {
-    collectObjects(
-      root,
-      all
-    );
-  }
-
   const seasons = [];
 
-  for (const item of all) {
+  for (
+    const item of
+      collectObjects(seo)
+  ) {
     if (
-      objectType(item) ===
-        "season" &&
-      item.id
+      objectType(item) !==
+        "season" ||
+      !item.id
     ) {
-      seasons.push({
-        id: String(item.id),
-        title:
-          item.title ||
-          item.name ||
-          "Season",
-        number:
-          parseSeasonNumber(item),
-        webUrl:
-          objectWebUrl(item)
-      });
+      continue;
     }
+
+    seasons.push({
+      id:
+        String(item.id),
+
+      title:
+        item.title ||
+        item.name ||
+        "Season",
+
+      number:
+        parseSeasonNumber(
+          item
+        ),
+
+      webUrl:
+        objectWebUrl(item)
+    });
   }
 
-  return {
-    seasons
-  };
+  return seasons;
 }
 
 
-async function getShowSeasons(show) {
-  const found =
+async function getShowSeasons(
+  show
+) {
+  const map =
     new Map();
 
-  if (show.webUrl) {
-    try {
-      const page =
-        await fetchMxPage(
-          show.webUrl
-        );
+  if (!show.webUrl) {
+    return [];
+  }
 
-      for (
-        const season of
-          findSeasonObjects(
-            page.state
-          )
-      ) {
-        if (
-          !found.has(
-            season.number
-          )
-        ) {
-          found.set(
-            season.number,
-            season
-          );
-        }
-      }
-    } catch (error) {
-      console.log(
-        `[SEASONS] page failed: ${error.message}`
+  try {
+    const page =
+      await fetchMxPage(
+        show.webUrl
       );
-    }
 
-    try {
-      const seo =
-        await mxSeo(
-          show.webUrl
+    for (
+      const season of
+        findSeasonObjects(
+          page.state
+        )
+    ) {
+      if (
+        !map.has(
+          season.number
+        )
+      ) {
+        map.set(
+          season.number,
+          season
         );
+      }
+    }
+  } catch (error) {
+    console.log(
+      `[SEASONS] page failed: ${error.message}`
+    );
+  }
 
-      const deps =
-        extractSeoDependencies(
+  try {
+    const seo =
+      await mxSeo(
+        show.webUrl
+      );
+
+    for (
+      const season of
+        extractSeoSeasons(
           seo
-        );
-
-      for (
-        const season of
-          deps.seasons
+        )
+    ) {
+      if (
+        season.number &&
+        !map.has(
+          season.number
+        )
       ) {
-        if (
-          season.number &&
-          !found.has(
-            season.number
-          )
-        ) {
-          found.set(
-            season.number,
-            season
-          );
-        }
+        map.set(
+          season.number,
+          season
+        );
       }
-    } catch (error) {
-      console.log(
-        `[SEASONS] SEO failed: ${error.message}`
-      );
     }
+  } catch (error) {
+    console.log(
+      `[SEASONS] SEO failed: ${error.message}`
+    );
   }
 
   return [
-    ...found.values()
+    ...map.values()
   ].sort(
     (a, b) =>
       a.number - b.number
@@ -914,23 +1045,23 @@ async function findRequestedSeason(
       show
     );
 
-  let season =
+  const direct =
     seasons.find(
       item =>
         Number(item.number) ===
         Number(seasonNumber)
     );
 
-  if (season) {
-    return season;
+  if (direct) {
+    return direct;
   }
 
-  const queries = [
-    `${show.title} season ${seasonNumber}`,
-    `${show.title} S${seasonNumber}`
-  ];
-
-  for (const query of queries) {
+  for (
+    const query of [
+      `${show.title} season ${seasonNumber}`,
+      `${show.title} S${seasonNumber}`
+    ]
+  ) {
     try {
       const results =
         await mxSearchRaw(
@@ -959,7 +1090,9 @@ async function findRequestedSeason(
           .filter(
             x =>
               x.number ===
-              Number(seasonNumber)
+              Number(
+                seasonNumber
+              )
           )
           .sort(
             (a, b) =>
@@ -973,12 +1106,18 @@ async function findRequestedSeason(
           candidates[0].item;
 
         return {
-          id: String(item.id),
+          id:
+            String(item.id),
+
           title:
             item.title ||
             `Season ${seasonNumber}`,
+
           number:
-            Number(seasonNumber),
+            Number(
+              seasonNumber
+            ),
+
           webUrl:
             objectWebUrl(item)
         };
@@ -995,7 +1134,9 @@ async function findRequestedSeason(
     `discovered seasons: ` +
     (
       seasons
-        .map(s => s.number)
+        .map(
+          s => s.number
+        )
         .join(", ") ||
       "none"
     )
@@ -1019,9 +1160,14 @@ async function getSeasonEpisodes(
     page++
   ) {
     const params = {
-      type: "season",
-      id: seasonId,
-      sortOrder: "0"
+      type:
+        "season",
+
+      id:
+        seasonId,
+
+      sortOrder:
+        "0"
     };
 
     if (next) {
@@ -1035,12 +1181,15 @@ async function getSeasonEpisodes(
           const [
             key,
             value
-          ] of nextParams.entries()
+          ]
+          of nextParams.entries()
         ) {
-          params[key] = value;
+          params[key] =
+            value;
         }
       } catch {
-        params.page = next;
+        params.page =
+          next;
       }
     }
 
@@ -1051,13 +1200,15 @@ async function getSeasonEpisodes(
       );
 
     const payload =
-      data &&
-      data.data !== undefined
+      data?.data !==
+        undefined
         ? data.data
         : data;
 
     const items =
-      Array.isArray(payload)
+      Array.isArray(
+        payload
+      )
         ? payload
         : Array.isArray(
             payload?.items
@@ -1069,7 +1220,9 @@ async function getSeasonEpisodes(
             ? payload.results
             : [];
 
-    if (!items.length) {
+    if (
+      !items.length
+    ) {
       break;
     }
 
@@ -1078,7 +1231,9 @@ async function getSeasonEpisodes(
     );
 
     const token =
-      !Array.isArray(payload)
+      !Array.isArray(
+        payload
+      )
         ? (
             payload?.next ??
             payload?.nextPage ??
@@ -1091,25 +1246,29 @@ async function getSeasonEpisodes(
       break;
     }
 
-    next = token;
+    next =
+      token;
   }
 
   return episodes;
 }
 
 
-function episodeNumber(item) {
-  const values = [
-    item?.episodeNo,
-    item?.episode_number,
-    item?.episodeNumber,
-    item?.episode_no,
-    item?.sequence
-  ];
-
-  for (const value of values) {
+function episodeNumber(
+  item
+) {
+  for (
+    const value of [
+      item?.episodeNo,
+      item?.episode_number,
+      item?.episodeNumber,
+      item?.episode_no,
+      item?.sequence
+    ]
+  ) {
     if (
-      value !== undefined &&
+      value !==
+        undefined &&
       value !== null &&
       String(value).trim()
     ) {
@@ -1144,7 +1303,7 @@ function episodeNumber(item) {
 
 
 /* ============================================================
-   STREAM OBJECT
+   DETAIL / STREAM
    ============================================================ */
 
 function extractStreamObject(
@@ -1152,22 +1311,24 @@ function extractStreamObject(
 ) {
   if (
     !detail ||
-    typeof detail !== "object"
+    typeof detail !==
+      "object"
   ) {
     return null;
   }
 
-  const candidates = [
-    detail.stream,
-    detail.data?.stream,
-    detail.result?.stream,
-    detail.data?.data?.stream
-  ];
-
-  for (const stream of candidates) {
+  for (
+    const stream of [
+      detail.stream,
+      detail.data?.stream,
+      detail.result?.stream,
+      detail.data?.data?.stream
+    ]
+  ) {
     if (
       stream &&
-      typeof stream === "object"
+      typeof stream ===
+        "object"
     ) {
       return stream;
     }
@@ -1175,13 +1336,17 @@ function extractStreamObject(
 
   for (
     const item of
-      collectObjects(detail)
+      collectObjects(
+        detail
+      )
   ) {
     if (
       item &&
-      typeof item === "object" &&
+      typeof item ===
+        "object" &&
       item.hls &&
-      typeof item.hls === "object"
+      typeof item.hls ===
+        "object"
     ) {
       return item;
     }
@@ -1191,31 +1356,102 @@ function extractStreamObject(
 }
 
 
-/* ============================================================
-   EPISODE DETAIL
-   ============================================================ */
-
-async function getEpisodeDetail(
-  episode
+/*
+ * V16:
+ *
+ * If we have a real MX page URL:
+ *
+ *     page URL
+ *       ↓
+ *     SEO
+ *       ↓
+ *     data.id + data.type
+ *       ↓
+ *     detail/video
+ *
+ * The fallback candidate is retained only if SEO
+ * fails or the SEO-resolved detail has no stream.
+ */
+async function detailFromMxPage(
+  webUrl,
+  fallbackId,
+  fallbackType
 ) {
-  const candidates = [
-    {
-      type:
-        objectType(episode) ||
-        "episode",
-      id: episode.id
-    },
-    {
-      type: "episode",
-      id: episode.id
-    }
-  ];
+  let resolved = null;
+  let seoError = null;
 
-  let last = null;
+  if (webUrl) {
+    try {
+      resolved =
+        await resolveMxUrl(
+          webUrl
+        );
+    } catch (error) {
+      seoError =
+        error;
+
+      console.log(
+        `[SEO DETAIL] failed for ${webUrl}: ${error.message}`
+      );
+    }
+  }
+
+  const candidates = [];
+
+  if (
+    resolved?.id &&
+    resolved?.type
+  ) {
+    candidates.push({
+      id:
+        resolved.id,
+
+      type:
+        resolved.type
+    });
+  }
+
+  if (
+    fallbackId &&
+    fallbackType
+  ) {
+    candidates.push({
+      id:
+        String(
+          fallbackId
+        ),
+
+      type:
+        String(
+          fallbackType
+        ).toLowerCase()
+    });
+  }
+
+  const seen =
+    new Set();
+
+  let lastDetail =
+    null;
+
+  let lastCandidate =
+    null;
 
   for (
-    const candidate of candidates
+    const candidate of
+      candidates
   ) {
+    const key =
+      `${candidate.type}:${candidate.id}`;
+
+    if (
+      seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+
     try {
       const detail =
         await mxGet(
@@ -1223,23 +1459,69 @@ async function getEpisodeDetail(
           candidate
         );
 
-      last = detail;
+      lastDetail =
+        detail;
+
+      lastCandidate =
+        candidate;
 
       if (
         extractStreamObject(
           detail
         )
       ) {
-        return detail;
+        return {
+          detail,
+
+          resolved:
+            candidate,
+
+          seo:
+            resolved,
+
+          seoError:
+            seoError
+              ? seoError.message
+              : null
+        };
       }
     } catch (error) {
       console.log(
-        `[DETAIL] ${candidate.type}/${candidate.id}: ${error.message}`
+        `[DETAIL] ${key}: ${error.message}`
       );
     }
   }
 
-  return last;
+  return {
+    detail:
+      lastDetail,
+
+    resolved:
+      lastCandidate ||
+      (
+        fallbackId &&
+        fallbackType
+          ? {
+              id:
+                String(
+                  fallbackId
+                ),
+              type:
+                String(
+                  fallbackType
+                )
+            }
+          : null
+      ),
+
+    seo:
+      resolved,
+
+    seoError:
+      seoError
+        ? seoError.message
+        : null
+  };
 }
 
 
@@ -1253,7 +1535,8 @@ async function resolveSeries(
   requestedEpisode
 ) {
   const result = {
-    stage: "cinemeta"
+    stage:
+      "cinemeta"
   };
 
   const cm =
@@ -1314,9 +1597,15 @@ async function resolveSeries(
   }
 
   result.mxShow = {
-    id: show.id,
-    title: show.title,
-    type: objectType(show),
+    id:
+      show.id,
+
+    title:
+      show.title,
+
+    type:
+      objectType(show),
+
     webUrl:
       objectWebUrl(show)
   };
@@ -1345,7 +1634,9 @@ async function resolveSeries(
     episodes.find(
       item =>
         episodeNumber(item) ===
-        Number(requestedEpisode)
+        Number(
+          requestedEpisode
+        )
     );
 
   if (!episode) {
@@ -1356,7 +1647,9 @@ async function resolveSeries(
         episodes
           .map(item => {
             const n =
-              episodeNumber(item);
+              episodeNumber(
+                item
+              );
 
             const title =
               item.title ||
@@ -1374,42 +1667,88 @@ async function resolveSeries(
   }
 
   result.episode = {
-    id: episode.id,
+    id:
+      episode.id,
+
     title:
       episode.title ||
       episode.name,
+
     episodeNo:
-      episodeNumber(episode),
+      episodeNumber(
+        episode
+      ),
+
     type:
-      objectType(episode) ||
+      objectType(
+        episode
+      ) ||
       "episode",
+
     webUrl:
-      objectWebUrl(episode)
+      objectWebUrl(
+        episode
+      )
   };
+
+  result.stage =
+    "mx-seo";
+
+  /*
+   * IMPORTANT V16 FIX:
+   *
+   * Resolve the episode's own webUrl through SEO.
+   */
+  const resolvedDetail =
+    await detailFromMxPage(
+      result.episode.webUrl,
+      episode.id,
+      "episode"
+    );
+
+  result.mxResolved =
+    resolvedDetail.resolved;
+
+  result.seo =
+    resolvedDetail.seo
+      ? {
+          id:
+            resolvedDetail.seo.id,
+
+          type:
+            resolvedDetail.seo.type,
+
+          title:
+            resolvedDetail.seo.title
+        }
+      : null;
+
+  result.seoError =
+    resolvedDetail.seoError;
 
   result.stage =
     "mx-detail";
 
-  const detail =
-    await getEpisodeDetail(
-      episode
-    );
-
   if (
     !extractStreamObject(
-      detail
+      resolvedDetail.detail
     )
   ) {
     throw new Error(
-      `MX episode has no stream object for ${episode.id}`
+      `MX episode has no stream object ` +
+      `(episode=${episode.id}, ` +
+      `resolved=${JSON.stringify(
+        resolvedDetail.resolved
+      )}, ` +
+      `seoError=${resolvedDetail.seoError || "none"})`
     );
   }
 
+  result.detail =
+    resolvedDetail.detail;
+
   result.stage =
     "hls";
-
-  result.detail =
-    detail;
 
   return result;
 }
@@ -1423,7 +1762,8 @@ async function resolveMovie(
   imdbId
 ) {
   const result = {
-    stage: "cinemeta"
+    stage:
+      "cinemeta"
   };
 
   const cm =
@@ -1502,196 +1842,77 @@ async function resolveMovie(
   }
 
   result.mxMovie = {
-    id: movie.id,
-    title: movie.title,
-    type: objectType(movie),
+    id:
+      movie.id,
+
+    title:
+      movie.title,
+
+    type:
+      objectType(movie),
+
     webUrl:
       objectWebUrl(movie)
   };
 
-  /*
-   * Search result IDs are not always the actual
-   * playable detail IDs. Resolve the MX page
-   * through SEO first.
-   */
-
   result.stage =
     "mx-seo";
 
-  let resolvedId =
-    movie.id;
+  /*
+   * IMPORTANT V16 FIX:
+   *
+   * Resolve the movie's own webUrl through SEO.
+   */
+  const resolvedDetail =
+    await detailFromMxPage(
+      result.mxMovie.webUrl,
+      movie.id,
+      "movie"
+    );
 
-  let resolvedType =
-    objectType(movie) ||
-    "movie";
+  result.mxResolved =
+    resolvedDetail.resolved;
 
-  if (
-    objectWebUrl(movie)
-  ) {
-    try {
-      const seo =
-        await mxSeo(
-          objectWebUrl(movie)
-        );
+  result.seo =
+    resolvedDetail.seo
+      ? {
+          id:
+            resolvedDetail.seo.id,
 
-      const all = [];
+          type:
+            resolvedDetail.seo.type,
 
-      for (
-        const root of [
-          seo,
-          seo?.data,
-          seo?.result
-        ].filter(Boolean)
-      ) {
-        collectObjects(
-          root,
-          all
-        );
-      }
-
-      const candidate =
-        all.find(
-          item =>
-            item.id &&
-            (
-              objectType(item) ===
-                "movie" ||
-              objectType(item) ===
-                "video" ||
-              objectType(item) ===
-                "film"
-            )
-        );
-
-      if (candidate) {
-        resolvedId =
-          String(
-            candidate.id
-          );
-
-        const type =
-          objectType(
-            candidate
-          );
-
-        resolvedType =
-          (
-            type === "video" ||
-            type === "film"
-          )
-            ? "movie"
-            : type;
-      }
-
-      const data =
-        seo?.data ||
-        seo?.result ||
-        seo;
-
-      if (data?.id) {
-        resolvedId =
-          String(data.id);
-      }
-
-      if (
-        data?.type
-      ) {
-        const type =
-          String(
-            data.type
-          ).toLowerCase();
-
-        if (
-          [
-            "movie",
-            "video",
-            "film"
-          ].includes(type)
-        ) {
-          resolvedType =
-            (
-              type === "video" ||
-              type === "film"
-            )
-              ? "movie"
-              : type;
+          title:
+            resolvedDetail.seo.title
         }
-      }
-    } catch (error) {
-      console.log(
-        `[MOVIE] SEO failed: ${error.message}`
-      );
-    }
-  }
+      : null;
 
-  result.mxResolved = {
-    id: resolvedId,
-    type: resolvedType
-  };
+  result.seoError =
+    resolvedDetail.seoError;
 
   result.stage =
     "mx-detail";
 
-  const candidates = [
-    {
-      type: resolvedType,
-      id: resolvedId
-    },
-    {
-      type: "movie",
-      id: movie.id
-    }
-  ];
-
-  let detail = null;
-
-  for (
-    const candidate of candidates
-  ) {
-    try {
-      const current =
-        await mxGet(
-          "/detail/video",
-          candidate
-        );
-
-      detail =
-        current;
-
-      if (
-        extractStreamObject(
-          current
-        )
-      ) {
-        result.mxResolved =
-          candidate;
-
-        break;
-      }
-    } catch (error) {
-      console.log(
-        `[MOVIE] detail ${candidate.type}/${candidate.id}: ${error.message}`
-      );
-    }
-  }
-
   if (
     !extractStreamObject(
-      detail
+      resolvedDetail.detail
     )
   ) {
     throw new Error(
       `MX movie has no stream object ` +
       `(search=${movie.id}, ` +
-      `resolved=${resolvedType}/${resolvedId})`
+      `resolved=${JSON.stringify(
+        resolvedDetail.resolved
+      )}, ` +
+      `seoError=${resolvedDetail.seoError || "none"})`
     );
   }
 
+  result.detail =
+    resolvedDetail.detail;
+
   result.stage =
     "hls";
-
-  result.detail =
-    detail;
 
   return result;
 }
@@ -1733,7 +1954,9 @@ function extractHls(
 
   if (
     url &&
-    !String(url).startsWith("http")
+    !String(url).startsWith(
+      "http"
+    )
   ) {
     url =
       `${CDN}/${String(url).replace(/^\/+/, "")}`;
@@ -1782,7 +2005,9 @@ function parseAttributes(
 
   while (
     (match =
-      regex.exec(content))
+      regex.exec(
+        content
+      ))
   ) {
     let value =
       match[2];
@@ -1840,19 +2065,25 @@ function parseMaster(
         );
 
       if (
-        attrs.TYPE === "AUDIO" &&
+        attrs.TYPE ===
+          "AUDIO" &&
         attrs.URI
       ) {
         audios.push({
           group:
-            attrs["GROUP-ID"],
+            attrs[
+              "GROUP-ID"
+            ],
+
           url:
             absoluteUrl(
               attrs.URI,
               masterUrl
             ),
+
           default:
-            attrs.DEFAULT === "YES"
+            attrs.DEFAULT ===
+            "YES"
         });
       }
     }
@@ -1890,10 +2121,14 @@ function parseMaster(
 
         if (match) {
           width =
-            Number(match[1]);
+            Number(
+              match[1]
+            );
 
           height =
-            Number(match[2]);
+            Number(
+              match[2]
+            );
         }
       }
 
@@ -1903,16 +2138,21 @@ function parseMaster(
             uri,
             masterUrl
           ),
+
         bandwidth:
           Number(
             attrs.BANDWIDTH ||
             0
           ),
+
         width,
+
         height,
+
         codecs:
           attrs.CODECS ||
           null,
+
         audioGroup:
           attrs.AUDIO ||
           null
@@ -1988,6 +2228,7 @@ async function fetchHlsText(
           MX_HEADERS[
             "User-Agent"
           ],
+
         Referer:
           "https://www.mxplayer.in/"
       }
@@ -2005,15 +2246,19 @@ async function urlWorks(
       await fetch(
         url,
         {
-          method: "GET",
+          method:
+            "GET",
+
           headers: {
             "User-Agent":
               MX_HEADERS[
                 "User-Agent"
               ],
+
             Referer:
               "https://www.mxplayer.in/"
           },
+
           signal:
             AbortSignal.timeout(
               10000
@@ -2046,6 +2291,7 @@ async function discoverDirectHls(
         "h264_2160_high_8000k.m3u8"
       ]
     ],
+
     [
       "1440p",
       [
@@ -2053,6 +2299,7 @@ async function discoverDirectHls(
         "h264_1440_high_6000k.m3u8"
       ]
     ],
+
     [
       "1080p",
       [
@@ -2062,6 +2309,7 @@ async function discoverDirectHls(
         "h264_1080_high_4000k.m3u8"
       ]
     ],
+
     [
       "720p",
       [
@@ -2070,6 +2318,7 @@ async function discoverDirectHls(
         "h264_720_high_2000k.m3u8"
       ]
     ],
+
     [
       "480p",
       [
@@ -2077,6 +2326,7 @@ async function discoverDirectHls(
         "h264_480_high_1500k.m3u8"
       ]
     ],
+
     [
       "360p",
       [
@@ -2084,6 +2334,7 @@ async function discoverDirectHls(
         "h264_360_high_600k.m3u8"
       ]
     ],
+
     [
       "180p",
       [
@@ -2091,6 +2342,7 @@ async function discoverDirectHls(
         "h264_180_high_200k.m3u8"
       ]
     ],
+
     [
       "High",
       [
@@ -2103,7 +2355,7 @@ async function discoverDirectHls(
 
   for (
     const [label, files]
-    of candidates
+      of candidates
   ) {
     for (
       const file of files
@@ -2112,7 +2364,9 @@ async function discoverDirectHls(
         base + file;
 
       if (
-        await urlWorks(url)
+        await urlWorks(
+          url
+        )
       ) {
         found.push({
           label,
@@ -2137,20 +2391,20 @@ async function findAudio(
       hlsUrl.lastIndexOf("/") + 1
     );
 
-  const candidates = [
-    "audio_128000_0_96.m3u8",
-    "audio_96000_0_96.m3u8",
-    "audio_64000_0_96.m3u8"
-  ];
-
   for (
-    const file of candidates
+    const file of [
+      "audio_128000_0_96.m3u8",
+      "audio_96000_0_96.m3u8",
+      "audio_64000_0_96.m3u8"
+    ]
   ) {
     const url =
       base + file;
 
     if (
-      await urlWorks(url)
+      await urlWorks(
+        url
+      )
     ) {
       return url;
     }
@@ -2159,10 +2413,6 @@ async function findAudio(
   return null;
 }
 
-
-/* ============================================================
-   STREMIO STREAM
-   ============================================================ */
 
 function createStream(
   video,
@@ -2195,7 +2445,9 @@ function createStream(
       masterUrl,
 
     behaviorHints: {
-      notWebReady: true,
+      notWebReady:
+        true,
+
       bingeGroup:
         `mxplayer-${label}`
     }
@@ -2248,8 +2500,6 @@ async function streamsFromHls(
     return [];
   }
 
-  /* Real master playlist */
-
   if (
     text.includes(
       "#EXT-X-STREAM-INF:"
@@ -2267,11 +2517,6 @@ async function streamsFromHls(
       const variant of
         parsed.variants
     ) {
-      const label =
-        qualityLabel(
-          variant
-        );
-
       let audio = null;
 
       if (
@@ -2310,7 +2555,9 @@ async function streamsFromHls(
         createStream(
           variant.url,
           audio,
-          label,
+          qualityLabel(
+            variant
+          ),
           variant.bandwidth,
           variant.codecs
         )
@@ -2322,8 +2569,6 @@ async function streamsFromHls(
     );
   }
 
-  /* Direct MX media playlist */
-
   let qualities =
     await discoverDirectHls(
       hlsUrl
@@ -2334,8 +2579,11 @@ async function streamsFromHls(
   ) {
     qualities = [
       {
-        label: "High",
-        url: hlsUrl
+        label:
+          "High",
+
+        url:
+          hlsUrl
       }
     ];
   }
@@ -2377,22 +2625,25 @@ const manifest = {
 
   resources: [
     {
-      name: "stream",
-      types: [
-        "movie"
-      ],
-      idPrefixes: [
-        "tt"
-      ]
+      name:
+        "stream",
+
+      types:
+        ["movie"],
+
+      idPrefixes:
+        ["tt"]
     },
+
     {
-      name: "stream",
-      types: [
-        "series"
-      ],
-      idPrefixes: [
-        "tt"
-      ]
+      name:
+        "stream",
+
+      types:
+        ["series"],
+
+      idPrefixes:
+        ["tt"]
     }
   ],
 
@@ -2439,7 +2690,7 @@ app.use(
 
 
 /* ============================================================
-   ROOT
+   BASIC
    ============================================================ */
 
 app.get(
@@ -2462,10 +2713,6 @@ app.get(
 );
 
 
-/* ============================================================
-   HEALTH
-   ============================================================ */
-
 app.get(
   "/health",
   (req, res) => {
@@ -2485,7 +2732,7 @@ app.get(
         "automatic seasons",
         "automatic episodes",
         "automatic MX search",
-        "SEO resolver",
+        "SEO page resolution",
         "HLS quality discovery",
         "audio discovery"
       ]
@@ -2493,10 +2740,6 @@ app.get(
   }
 );
 
-
-/* ============================================================
-   MANIFEST
-   ============================================================ */
 
 app.get(
   "/manifest.json",
@@ -2509,7 +2752,7 @@ app.get(
 
 
 /* ============================================================
-   DEBUG MX SEARCH
+   DEBUG SEARCH
    ============================================================ */
 
 app.get(
@@ -2525,31 +2768,42 @@ app.get(
         );
 
       res.json({
-        ok: true,
+        ok:
+          true,
+
         query,
 
         results:
           results
             .slice(0, 50)
-            .map(item => ({
-              id:
-                item.id,
+            .map(
+              item => ({
+                id:
+                  item.id,
 
-              type:
-                objectType(item),
+                type:
+                  objectType(
+                    item
+                  ),
 
-              title:
-                item.title,
+                title:
+                  item.title,
 
-              webUrl:
-                objectWebUrl(item)
-            }))
+                webUrl:
+                  objectWebUrl(
+                    item
+                  )
+              })
+            )
       });
     } catch (error) {
       res.json({
-        ok: false,
+        ok:
+          false,
+
         error:
           error.message,
+
         stack:
           error.stack
       });
@@ -2559,7 +2813,7 @@ app.get(
 
 
 /* ============================================================
-   STREAM ENDPOINT
+   STREAM
    ============================================================ */
 
 app.get(
@@ -2577,21 +2831,23 @@ app.get(
 
     try {
 
-      /* --------------------------------------------------------
-         SERIES
-         -------------------------------------------------------- */
+      /* SERIES */
 
       if (
-        type === "series"
+        type ===
+        "series"
       ) {
         const parts =
-          videoId.split(":");
+          videoId.split(
+            ":"
+          );
 
         if (
           parts.length !== 3
         ) {
           return res.json({
-            streams: []
+            streams:
+              []
           });
         }
 
@@ -2599,18 +2855,29 @@ app.get(
           parts[0];
 
         const season =
-          Number(parts[1]);
+          Number(
+            parts[1]
+          );
 
         const episode =
-          Number(parts[2]);
+          Number(
+            parts[2]
+          );
 
         if (
-          !imdbId.startsWith("tt") ||
-          !Number.isInteger(season) ||
-          !Number.isInteger(episode)
+          !imdbId.startsWith(
+            "tt"
+          ) ||
+          !Number.isInteger(
+            season
+          ) ||
+          !Number.isInteger(
+            episode
+          )
         ) {
           return res.json({
-            streams: []
+            streams:
+              []
           });
         }
 
@@ -2621,14 +2888,11 @@ app.get(
             episode
           );
 
-        const stream =
-          extractStreamObject(
-            resolved.detail
-          );
-
         const hls =
           extractHls(
-            stream
+            extractStreamObject(
+              resolved.detail
+            )
           );
 
         const streams =
@@ -2648,27 +2912,25 @@ app.get(
       }
 
 
-      /* --------------------------------------------------------
-         MOVIE
-         -------------------------------------------------------- */
+      /* MOVIE */
 
       if (
-        type === "movie" &&
-        videoId.startsWith("tt")
+        type ===
+          "movie" &&
+        videoId.startsWith(
+          "tt"
+        )
       ) {
         const resolved =
           await resolveMovie(
             videoId
           );
 
-        const stream =
-          extractStreamObject(
-            resolved.detail
-          );
-
         const hls =
           extractHls(
-            stream
+            extractStreamObject(
+              resolved.detail
+            )
           );
 
         const streams =
@@ -2686,9 +2948,9 @@ app.get(
         });
       }
 
-
       return res.json({
-        streams: []
+        streams:
+          []
       });
 
     } catch (error) {
@@ -2699,7 +2961,8 @@ app.get(
       );
 
       return res.json({
-        streams: []
+        streams:
+          []
       });
     }
   }
@@ -2721,23 +2984,20 @@ app.get(
         req.params.videoId;
 
 
-      /* MOVIE DEBUG */
+      /* MOVIE */
 
       if (
-        type === "movie"
+        type ===
+        "movie"
       ) {
         const resolved =
           await resolveMovie(
             videoId
           );
 
-        const stream =
-          extractStreamObject(
-            resolved.detail
-          );
-
         return res.json({
-          ok: true,
+          ok:
+            true,
 
           type,
 
@@ -2756,27 +3016,37 @@ app.get(
           mxResolved:
             resolved.mxResolved,
 
+          seo:
+            resolved.seo,
+
           hls:
             extractHls(
-              stream
+              extractStreamObject(
+                resolved.detail
+              )
             )
         });
       }
 
 
-      /* SERIES DEBUG */
+      /* SERIES */
 
       if (
-        type === "series"
+        type ===
+        "series"
       ) {
         const parts =
-          videoId.split(":");
+          videoId.split(
+            ":"
+          );
 
         if (
           parts.length !== 3
         ) {
           return res.json({
-            ok: false,
+            ok:
+              false,
+
             error:
               "Series ID must be ttXXXXXXX:season:episode"
           });
@@ -2785,17 +3055,17 @@ app.get(
         const resolved =
           await resolveSeries(
             parts[0],
-            Number(parts[1]),
-            Number(parts[2])
-          );
-
-        const stream =
-          extractStreamObject(
-            resolved.detail
+            Number(
+              parts[1]
+            ),
+            Number(
+              parts[2]
+            )
           );
 
         return res.json({
-          ok: true,
+          ok:
+            true,
 
           type,
 
@@ -2814,16 +3084,26 @@ app.get(
           episode:
             resolved.episode,
 
+          mxResolved:
+            resolved.mxResolved,
+
+          seo:
+            resolved.seo,
+
           hls:
             extractHls(
-              stream
+              extractStreamObject(
+                resolved.detail
+              )
             )
         });
       }
 
 
       return res.json({
-        ok: false,
+        ok:
+          false,
+
         error:
           "Unsupported type"
       });
@@ -2831,7 +3111,8 @@ app.get(
     } catch (error) {
 
       return res.json({
-        ok: false,
+        ok:
+          false,
 
         error:
           error.message,
@@ -2856,10 +3137,6 @@ app.get(
 
     const audio =
       req.query.audio;
-
-    const label =
-      req.query.label ||
-      "High";
 
     const bandwidth =
       Number(
@@ -2925,7 +3202,9 @@ app.get(
     );
 
     res.send(
-      lines.join("\n") +
+      lines.join(
+        "\n"
+      ) +
       "\n"
     );
   }
