@@ -5,953 +5,672 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 
-const ADDON_BASE =
-  "https://my-stremio-addon-q8ep.onrender.com";
+const ADDON_BASE = "https://my-stremio-addon-q8ep.onrender.com";
 
-const MX_API =
-  "https://api.mxplayer.in/v1/web";
+const MX_API = "https://api.mxplayer.in/v1/web";
+
+const CDN_BASE = "https://d3sgzbosmwirao.cloudfront.net";
+
+const VERSION = "12.0.0";
 
 
 // ============================================================
-// CORS
+// MX PLAYER API
 // ============================================================
 
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,HEAD,OPTIONS"
-  );
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Accept, Origin"
-  );
-  res.setHeader(
-    "Access-Control-Max-Age",
-    "86400"
-  );
+const MX_USER_ID =
+  process.env.MX_USER_ID ||
+  "00000000-0000-4000-8000-000000000001";
 
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
+const MX_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "Chrome/125.0.0.0 Safari/537.36",
+
+  "Accept": "application/json, text/plain, */*",
+
+  "Referer": "https://www.mxplayer.in/",
+
+  "Origin": "https://www.mxplayer.in"
+};
+
+
+async function mxRequest(path, params = {}, options = {}) {
+  const url = new URL(MX_API + path);
+
+  const baseParams = {
+    "device-density": "2",
+    "platform": "com.mxplay.desktop",
+    "content-languages": "hi,en",
+    "kids-mode-enabled": "false",
+    userid: MX_USER_ID
+  };
+
+  for (const [key, value] of Object.entries({
+    ...baseParams,
+    ...params
+  })) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(key, String(value));
+    }
   }
 
-  next();
-});
+  const controller = new AbortController();
+
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, options.timeout || 12000);
+
+  try {
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers: MX_HEADERS,
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `MX API HTTP ${response.status}`
+      );
+    }
+
+    return await response.json();
+
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 
 // ============================================================
-// KNOWN EPISODES
+// KNOWN WORKING EPISODES
+//
+// Keep E1/E2 exactly as they were because we already verified
+// those streams manually.
 // ============================================================
 
 const KNOWN_EPISODES = {
 
-  // ----------------------------------------------------------
-  // Yeh Meri Family S2E1
-  // ----------------------------------------------------------
-
   "tt8595766:2:1": {
-
     title: "Apna Kamra",
 
     hash:
       "637eda9d371fa6ddeac209e765b524413fa1cdd15e34d0da6ece4fc9c6706218",
 
     knownVideos: [
-
-      "h264_high.m3u8",
-
       "h264_720_high_3000k.m3u8",
-
+      "h264_high.m3u8",
       "h264_360_high_750k.m3u8",
-
       "h264_180_high_235k.m3u8"
-
     ]
-
   },
 
 
-  // ----------------------------------------------------------
-  // Yeh Meri Family S2E2
-  // ----------------------------------------------------------
-
+  // Keep the user's existing working mapping.
   "tt8595766:2:2": {
-
     title: "Cable TV",
 
     hash:
       "f275ab1d5b01a1c891d6948b650f3f6ca0f48b780ca7ab2a76ffea423a233c03",
 
     knownVideos: [
-
-      // Confirmed from MX Player Network
       "h264_1080_high_5800k.m3u8",
-
       "h264_high.m3u8",
-
       "h264_480_high_1750k.m3u8",
-
       "h264_360_high_750k.m3u8",
-
       "h264_180_high_235k.m3u8"
-
     ]
-
   }
 
 };
 
 
 // ============================================================
-// KNOWN SEASONS
+// REQUESTED EPISODE TITLE OVERRIDES
+//
+// This preserves the numbering currently used by the user's
+// Stremio setup:
+//
+// E3 -> Party
+// E4 -> Parent Teacher Meeting
+// E5 -> Blank Call
 // ============================================================
 
-const KNOWN_SEASONS = {
+const EPISODE_TITLE_OVERRIDES = {
 
-  "tt8595766:2":
-    "1a8452f31b2fcff5e495b44afdb3fbdb"
+  "tt8595766:2:3": "Party",
+
+  "tt8595766:2:4": "Parent Teacher Meeting",
+
+  "tt8595766:2:5": "Blank Call"
 
 };
 
 
 // ============================================================
-// HTTP HELPERS
+// QUALITY DEFINITIONS
 // ============================================================
 
-async function fetchText(url, options = {}) {
+const QUALITY_DEFINITIONS = [
 
-  const response = await fetch(url, {
+  {
+    label: "2160p",
+    patterns: [
+      "h264_2160_high_12000k.m3u8",
+      "h264_2160_high_10000k.m3u8",
+      "h264_2160_high_8000k.m3u8"
+    ]
+  },
 
-    ...options,
+  {
+    label: "1440p",
+    patterns: [
+      "h264_1440_high_8000k.m3u8",
+      "h264_1440_high_6000k.m3u8"
+    ]
+  },
 
-    headers: {
+  {
+    label: "1080p",
+    patterns: [
+      "h264_1080_high_5800k.m3u8",
+      "h264_1080_high_5000k.m3u8",
+      "h264_1080_high_4500k.m3u8"
+    ]
+  },
 
-      "User-Agent":
-        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/148 Mobile Safari/537.36",
+  {
+    label: "720p",
+    patterns: [
+      "h264_720_high_3000k.m3u8",
+      "h264_720_high_2500k.m3u8"
+    ]
+  },
 
-      Accept:
-        "*/*",
+  {
+    label: "480p",
+    patterns: [
+      "h264_480_high_1750k.m3u8",
+      "h264_480_high_1500k.m3u8"
+    ]
+  },
 
-      ...(options.headers || {})
+  {
+    label: "360p",
+    patterns: [
+      "h264_360_high_750k.m3u8",
+      "h264_360_high_600k.m3u8"
+    ]
+  },
 
+  {
+    label: "180p",
+    patterns: [
+      "h264_180_high_235k.m3u8",
+      "h264_180_high_200k.m3u8"
+    ]
+  },
+
+  {
+    label: "High",
+    patterns: [
+      "h264_high.m3u8"
+    ]
+  }
+];
+
+
+const AUDIO_FILES = [
+  "audio_128000_0_96.m3u8",
+  "audio_96000_0_96.m3u8",
+  "audio_64000_0_96.m3u8"
+];
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+
+function uniqueBy(array, keyFn) {
+
+  const seen = new Set();
+
+  return array.filter(item => {
+
+    const key = keyFn(item);
+
+    if (seen.has(key)) {
+      return false;
     }
 
+    seen.add(key);
+
+    return true;
   });
-
-
-  if (!response.ok) {
-
-    throw new Error(
-      `HTTP ${response.status}: ${url}`
-    );
-
-  }
-
-
-  return await response.text();
-
 }
 
 
-async function fetchJson(url, options = {}) {
+function getHashFromHls(hls) {
 
-  const text =
-    await fetchText(url, options);
-
-
-  try {
-
-    return JSON.parse(text);
-
-  } catch {
-
-    throw new Error(
-      `Invalid JSON from ${url}`
-    );
-
-  }
-
-}
-
-
-// ============================================================
-// MX USER ID
-// ============================================================
-
-function createUserId() {
-
-  return (
-    "addon-" +
-    Math.random()
-      .toString(36)
-      .substring(2) +
-    "-" +
-    Date.now()
-  );
-
-}
-
-
-// ============================================================
-// MX PARAMETERS
-// ============================================================
-
-function mxParams(extra = {}) {
-
-  return new URLSearchParams({
-
-    "device-density":
-      "2",
-
-    platform:
-      "com.mxplay.desktop",
-
-    "content-languages":
-      "hi,en",
-
-    "kids-mode-enabled":
-      "false",
-
-    userid:
-      createUserId(),
-
-    ...extra
-
-  });
-
-}
-
-
-// ============================================================
-// MX DETAIL
-// ============================================================
-
-async function mxDetail(id) {
-
-  const url =
-    `${MX_API}/detail/video?` +
-    mxParams({
-      id
-    }).toString();
-
-
-  return await fetchJson(url);
-
-}
-
-
-// ============================================================
-// MX SEASON EPISODES
-// ============================================================
-
-async function mxSeasonEpisodes(
-  seasonId
-) {
-
-  const url =
-    `${MX_API}/detail/tab/tvshowepisodes?` +
-    mxParams({
-
-      type:
-        "season",
-
-      id:
-        seasonId,
-
-      sortOrder:
-        "0"
-
-    }).toString();
-
-
-  return await fetchJson(url);
-
-}
-
-
-// ============================================================
-// COLLECT STRINGS
-// ============================================================
-
-function collectStrings(
-  value,
-  result = []
-) {
-
-  if (value == null) {
-    return result;
-  }
-
-
-  if (typeof value === "string") {
-
-    result.push(value);
-
-    return result;
-
-  }
-
-
-  if (Array.isArray(value)) {
-
-    for (const item of value) {
-
-      collectStrings(
-        item,
-        result
-      );
-
-    }
-
-    return result;
-
-  }
-
-
-  if (typeof value === "object") {
-
-    for (
-      const key of Object.keys(value)
-    ) {
-
-      collectStrings(
-        value[key],
-        result
-      );
-
-    }
-
-  }
-
-
-  return result;
-
-}
-
-
-// ============================================================
-// NORMALIZE URL
-// ============================================================
-
-function normalizeUrl(url) {
-
-  if (!url) {
+  if (!hls) {
     return null;
   }
 
-
-  return url
-
-    .replace(/\\u0026/g, "&")
-
-    .replace(/\\\//g, "/")
-
-    .replace(/&amp;/g, "&")
-
-    .replace(/^"|"$/g, "")
-
-    .trim();
-
-}
-
-
-// ============================================================
-// EXTRACT M3U8 URLS
-// ============================================================
-
-function extractM3u8Urls(text) {
-
-  if (!text) {
-    return [];
-  }
-
-
-  const urls = [];
-
-
-  const regex =
-    /https?:\/\/[^"'<>\\\s]+?\.m3u8(?:\?[^"'<>\\\s]*)?/gi;
-
-
-  let match;
-
-
-  while (
-    (match = regex.exec(text)) !== null
-  ) {
-
-    urls.push(
-      normalizeUrl(match[0])
+  const match =
+    hls.match(
+      /\/video\/([^/]+)\/\d+\/hls\//
     );
 
+  return match ? match[1] : null;
+}
+
+
+function getHlsBase(hls) {
+
+  if (!hls) {
+    return null;
   }
 
+  const index = hls.lastIndexOf("/");
 
-  return [
-    ...new Set(
-      urls.filter(Boolean)
-    )
-  ];
-
-}
-
-
-// ============================================================
-// EXTRACT M3U8 FROM OBJECT
-// ============================================================
-
-function extractHlsUrls(data) {
-
-  const result = [];
-
-
-  for (
-    const value of collectStrings(data)
-  ) {
-
-    if (
-      value &&
-      value.includes(".m3u8")
-    ) {
-
-      result.push(
-        ...extractM3u8Urls(value)
-      );
-
-    }
-
+  if (index === -1) {
+    return null;
   }
 
+  return hls.substring(0, index + 1);
+}
 
-  return [
-    ...new Set(result)
-  ];
 
+function qualityBandwidth(label) {
+
+  const values = {
+    "2160p": 12000000,
+    "1440p": 8000000,
+    "1080p": 5800000,
+    "720p": 3000000,
+    "480p": 1750000,
+    "360p": 750000,
+    "180p": 235000,
+    "High": 4000000
+  };
+
+  return values[label] || 2000000;
+}
+
+
+function qualityRank(label) {
+
+  const values = {
+    "2160p": 2160,
+    "1440p": 1440,
+    "1080p": 1080,
+    "720p": 720,
+    "480p": 480,
+    "360p": 360,
+    "180p": 180,
+    "High": 700
+  };
+
+  return values[label] || 0;
 }
 
 
 // ============================================================
-// EXTRACT VIDEO HASH
+// CHECK WHETHER A STREAM EXISTS
 // ============================================================
 
-function extractHash(urls) {
-
-  for (
-    const url of urls
-  ) {
-
-    const match =
-      url.match(
-        /\/video\/([a-f0-9]{64})\//
-      );
-
-
-    if (match) {
-
-      return match[1];
-
-    }
-
-  }
-
-
-  return null;
-
-}
-
-
-// ============================================================
-// BUILD MX VIDEO BASE
-// ============================================================
-
-function videoBase(hash) {
-
-  return (
-    `https://d3sgzbosmwirao.cloudfront.net/video/${hash}/3/hls/`
-  );
-
-}
-
-
-// ============================================================
-// CHECK URL
-// ============================================================
-
-async function urlWorks(url) {
+async function streamExists(url) {
 
   try {
 
-    const response =
-      await fetch(
-        url,
-        {
-          method: "GET",
+    const controller = new AbortController();
 
-          headers: {
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, 5000);
 
-            "User-Agent":
-              "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/148 Mobile Safari/537.36",
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+          "AppleWebKit/537.36 (KHTML, like Gecko) " +
+          "Chrome/125.0.0.0 Safari/537.36"
+      },
+      signal: controller.signal
+    });
 
-            Accept:
-              "*/*"
-
-          }
-
-        }
-      );
-
+    clearTimeout(timer);
 
     return response.ok;
 
-  } catch {
-
-    return false;
-
-  }
-
-}
-
-
-// ============================================================
-// QUALITY
-// ============================================================
-
-function quality(url) {
-
-  const lower =
-    url.toLowerCase();
-
-
-  if (
-    lower.includes("1080")
-  ) {
-
-    return {
-      value: 1080,
-      label: "1080p"
-    };
-
-  }
-
-
-  if (
-    lower.includes("720")
-  ) {
-
-    return {
-      value: 720,
-      label: "720p"
-    };
-
-  }
-
-
-  if (
-    lower.includes("480")
-  ) {
-
-    return {
-      value: 480,
-      label: "480p"
-    };
-
-  }
-
-
-  if (
-    lower.includes("360")
-  ) {
-
-    return {
-      value: 360,
-      label: "360p"
-    };
-
-  }
-
-
-  if (
-    lower.includes("240")
-  ) {
-
-    return {
-      value: 240,
-      label: "240p"
-    };
-
-  }
-
-
-  if (
-    lower.includes("180")
-  ) {
-
-    return {
-      value: 180,
-      label: "180p"
-    };
-
-  }
-
-
-  if (
-    lower.includes("h264_high.m3u8")
-  ) {
-
-    return {
-      value: 1000,
-      label: "High"
-    };
-
-  }
-
-
-  return {
-    value: 1,
-    label: "Auto"
-  };
-
-}
-
-
-// ============================================================
-// AUDIO URL
-// ============================================================
-
-async function findAudio(
-  hash,
-  discoveredUrls = []
-) {
-
-  // First: exact audio URL discovered from MX
-  for (
-    const url of discoveredUrls
-  ) {
-
-    if (
-      /audio[_-].*\.m3u8/i.test(url)
-    ) {
-
-      return url;
-
-    }
-
-  }
-
-
-  // Second: known MX naming
-  const base =
-    videoBase(hash);
-
-
-  const candidates = [
-
-    "audio_128000_0_96.m3u8",
-
-    "audio_128000_0_128.m3u8",
-
-    "audio_96000_0_96.m3u8",
-
-    "audio_96000_0_128.m3u8"
-
-  ];
-
-
-  for (
-    const filename of candidates
-  ) {
-
-    const url =
-      base + filename;
-
-
-    if (
-      await urlWorks(url)
-    ) {
-
-      return url;
-
-    }
-
-  }
-
-
-  return null;
-
-}
-
-
-// ============================================================
-// KNOWN VIDEO DISCOVERY
-// ============================================================
-
-async function discoverKnownVideos(
-  episode
-) {
-
-  const base =
-    videoBase(
-      episode.hash
-    );
-
-
-  const results = [];
-
-
-  // ----------------------------------------------------------
-  // Probe the exact known filenames
-  // ----------------------------------------------------------
-
-  for (
-    const filename of episode.knownVideos
-  ) {
-
-    const url =
-      base + filename;
-
-
-    const exists =
-      await urlWorks(url);
-
-
-    console.log(
-      "PROBE:",
-      filename,
-      exists
-    );
-
-
-    if (exists) {
-
-      results.push(
-        url
-      );
-
-    }
-
-  }
-
-
-  return [
-    ...new Set(results)
-  ];
-
-}
-
-
-// ============================================================
-// PAGE STREAM EXTRACTION
-// ============================================================
-
-async function pageStreams(page) {
-
-  if (!page) {
-    return [];
-  }
-
-
-  try {
-
-    const html =
-      await fetchText(page);
-
-
-    return extractM3u8Urls(
-      html
-    );
-
   } catch (error) {
 
-    console.log(
-      "PAGE ERROR:",
-      error.message
-    );
-
-
-    return [];
-
+    return false;
   }
-
 }
 
 
 // ============================================================
-// AUTOMATIC EPISODE OBJECTS
+// FIND AUDIO
 // ============================================================
 
-function findEpisodeObjects(
-  data
-) {
+async function findAudio(baseUrl) {
 
-  const result = [];
+  if (!baseUrl) {
+    return null;
+  }
+
+  const discovered = [];
+
+  for (const file of AUDIO_FILES) {
+
+    discovered.push(
+      `${baseUrl}${file}`
+    );
+  }
+
+  const results =
+    await Promise.all(
+      discovered.map(async url => ({
+        url,
+        ok: await streamExists(url)
+      }))
+    );
+
+  const working =
+    results.find(result => result.ok);
+
+  return working ? working.url : null;
+}
 
 
-  function walk(value) {
+// ============================================================
+// PROBE VIDEO QUALITIES
+// ============================================================
 
-    if (!value) {
-      return;
+async function probeQualities(baseUrl, knownVideos = []) {
+
+  if (!baseUrl) {
+    return [];
+  }
+
+  const candidates = [];
+
+  // First use explicitly known filenames.
+  for (const file of knownVideos) {
+
+    const quality =
+      QUALITY_DEFINITIONS.find(def =>
+        def.patterns.includes(file)
+      );
+
+    if (quality) {
+
+      candidates.push({
+        label: quality.label,
+        file,
+        url: `${baseUrl}${file}`
+      });
     }
+  }
 
 
-    if (Array.isArray(value)) {
+  // Then automatically try every known MX naming pattern.
+  for (const definition of QUALITY_DEFINITIONS) {
 
-      for (
-        const item of value
-      ) {
+    for (const file of definition.patterns) {
 
-        walk(item);
+      candidates.push({
+        label: definition.label,
+        file,
+        url: `${baseUrl}${file}`
+      });
+    }
+  }
+
+
+  const uniqueCandidates =
+    uniqueBy(
+      candidates,
+      item => item.url
+    );
+
+
+  const results =
+    await Promise.all(
+      uniqueCandidates.map(async item => ({
+        ...item,
+        ok: await streamExists(item.url)
+      }))
+    );
+
+
+  const working =
+    results.filter(item => item.ok);
+
+
+  // One quality may have multiple bitrate filenames.
+  // Keep only one working URL per quality.
+  const bestPerQuality = {};
+
+  for (const item of working) {
+
+    if (!bestPerQuality[item.label]) {
+      bestPerQuality[item.label] = item;
+    }
+  }
+
+
+  return Object.values(bestPerQuality)
+    .sort(
+      (a, b) =>
+        qualityRank(b.label) -
+        qualityRank(a.label)
+    );
+}
+
+
+// ============================================================
+// BUILD HLS MASTER WITH AUDIO
+// ============================================================
+
+function makeMasterPlaylist(videoUrl, audioUrl) {
+
+  const audioLine =
+    audioUrl
+      ? `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="MX Audio",DEFAULT=YES,AUTOSELECT=YES,URI="${audioUrl}"`
+      : null;
+
+
+  const lines = [
+    "#EXTM3U",
+    "#EXT-X-VERSION:3"
+  ];
+
+
+  if (audioLine) {
+    lines.push(audioLine);
+  }
+
+
+  lines.push(
+    `#EXT-X-STREAM-INF:BANDWIDTH=${qualityBandwidth(
+      "High"
+    )},CODECS="avc1.640028,mp4a.40.2"${audioUrl ? ',AUDIO="audio"' : ""}`,
+    videoUrl
+  );
+
+
+  return lines.join("\n") + "\n";
+}
+
+
+// ============================================================
+// RESOLVE DIRECT MX HLS
+// ============================================================
+
+async function buildQualityStreams({
+  hls,
+  knownVideos = [],
+  title = "MX Player"
+}) {
+
+  if (!hls) {
+    return [];
+  }
+
+
+  const baseUrl = getHlsBase(hls);
+
+  if (!baseUrl) {
+    return [];
+  }
+
+
+  const [qualities, audio] =
+    await Promise.all([
+      probeQualities(
+        baseUrl,
+        knownVideos
+      ),
+      findAudio(baseUrl)
+    ]);
+
+
+  const streams = [];
+
+
+  for (const quality of qualities) {
+
+    const masterUrl =
+      `${ADDON_BASE}/hls/master` +
+      `?video=${encodeURIComponent(quality.url)}` +
+      `&audio=${encodeURIComponent(audio || "")}` +
+      `&label=${encodeURIComponent(quality.label)}`;
+
+
+    streams.push({
+
+      name: `MX Player ${quality.label}`,
+
+      title:
+        `MX Player • ${quality.label}` +
+        `${audio ? " • Audio" : ""}`,
+
+      url: masterUrl,
+
+      behaviorHints: {
+
+        notWebReady: true,
+
+        bingeGroup:
+          `mxplayer-${quality.label}`
 
       }
 
-      return;
-
-    }
-
-
-    if (
-      typeof value !== "object"
-    ) {
-
-      return;
-
-    }
-
-
-    const id =
-      value.id ||
-      value.videoId ||
-      value.videoID;
-
-
-    const page =
-      value.webUrl ||
-      value.weburl ||
-      value.shareUrl ||
-      value.shareURL;
-
-
-    if (
-      id &&
-      page
-    ) {
-
-      result.push({
-
-        id,
-
-        page,
-
-        title:
-          value.title ||
-          value.name
-
-      });
-
-    }
-
-
-    for (
-      const key of Object.keys(value)
-    ) {
-
-      walk(value[key]);
-
-    }
-
+    });
   }
 
 
-  walk(data);
-
-
-  const unique = [];
-
-  const seen =
-    new Set();
-
-
-  for (
-    const item of result
-  ) {
-
-    const key =
-      `${item.id}|${item.page}`;
-
-
-    if (
-      !seen.has(key)
-    ) {
-
-      seen.add(key);
-
-      unique.push(item);
-
-    }
-
-  }
-
-
-  return unique;
-
+  return streams;
 }
 
 
 // ============================================================
-// AUTOMATIC EPISODE RESOLUTION
+// GET EPISODES FROM MX PLAYER
 // ============================================================
 
-async function resolveAutomatic(
-  videoId
-) {
+async function getSeasonEpisodes(seasonId) {
 
-  const match =
-    videoId.match(
-      /^(tt\d+):(\d+):(\d+)$/
+  const response =
+    await mxRequest(
+      "/detail/tab/tvshowepisodes",
+      {
+        type: "season",
+        id: seasonId,
+        sortOrder: "0"
+      }
     );
 
 
-  if (!match) {
+  let payload =
+    response &&
+    response.data !== undefined
+      ? response.data
+      : response;
+
+
+  if (
+    payload &&
+    !Array.isArray(payload) &&
+    Array.isArray(payload.items)
+  ) {
+    payload = payload.items;
+  }
+
+
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+
+
+  return payload;
+}
+
+
+// ============================================================
+// FIND USER-REQUESTED EPISODE
+// ============================================================
+
+async function resolveRequestedEpisode(videoId) {
+
+  const override =
+    EPISODE_TITLE_OVERRIDES[videoId];
+
+  if (!override) {
     return null;
   }
 
 
-  const imdb =
-    match[1];
-
-  const season =
-    Number(match[2]);
-
-  const episodeNumber =
-    Number(match[3]);
-
-
+  // We know this is Yeh Meri Family S2.
   const seasonId =
-    KNOWN_SEASONS[
-      `${imdb}:${season}`
-    ];
-
-
-  if (!seasonId) {
-    return null;
-  }
-
-
-  const data =
-    await mxSeasonEpisodes(
-      seasonId
-    );
+    "1a8452f31b2fcff5e495b44afdb3fbdb";
 
 
   const episodes =
-    findEpisodeObjects(
-      data
+    await getSeasonEpisodes(seasonId);
+
+
+  const wanted =
+    override.toLowerCase().trim();
+
+
+  // First try exact title.
+  let episode =
+    episodes.find(ep =>
+      String(ep.title || "")
+        .toLowerCase()
+        .trim() === wanted
     );
 
 
-  const episode =
-    episodes[
-      episodeNumber - 1
-    ];
+  // Then substring match.
+  if (!episode) {
+
+    episode =
+      episodes.find(ep =>
+        String(ep.title || "")
+          .toLowerCase()
+          .includes(wanted)
+      );
+  }
 
 
   if (!episode) {
@@ -959,336 +678,736 @@ async function resolveAutomatic(
   }
 
 
-  const streams =
-    await pageStreams(
-      episode.page
-    );
+  return {
+
+    id: episode.id,
+
+    title: episode.title,
+
+    episodeNo:
+      episode.episodeNo ||
+      episode.episode_number,
+
+    webUrl: episode.webUrl,
+
+    duration: episode.duration,
+
+    stream: episode.stream || null
+
+  };
+}
 
 
-  let hash =
-    extractHash(
-      streams
-    );
+// ============================================================
+// RESOLVE EPISODE DETAIL
+// ============================================================
+
+async function getEpisodeDetail(id) {
+
+  return await mxRequest(
+    "/detail/video",
+    {
+      type: "episode",
+      id
+    }
+  );
+}
 
 
-  // Try MX detail
+// ============================================================
+// GENERIC MOVIE DETAIL
+// ============================================================
+
+async function getMovieDetail(id) {
+
+  return await mxRequest(
+    "/detail/video",
+    {
+      type: "movie",
+      id
+    }
+  );
+}
+
+
+// ============================================================
+// EXTRACT HLS FROM MX STREAM OBJECT
+// ============================================================
+
+function extractHls(stream) {
+
+  if (!stream) {
+    return null;
+  }
+
+
+  const hls =
+    stream.hls || {};
+
+
+  const thirdParty =
+    stream.thirdParty || {};
+
+
+  const altBalaji =
+    stream.altBalaji || {};
+
+
+  const mxplay =
+    stream.mxplay || {};
+
+
+  return (
+    hls.high ||
+    hls.base ||
+    hls.main ||
+    thirdParty.hlsUrl ||
+    altBalaji.hlsUrl ||
+    (mxplay.hls && mxplay.hls.high) ||
+    null
+  );
+}
+
+
+// ============================================================
+// MOVIE CATALOG
+// ============================================================
+
+let movieCatalogCache = null;
+let movieCatalogCacheTime = 0;
+
+const MOVIE_CACHE_TIME =
+  10 * 60 * 1000;
+
+
+function imageFromItem(item) {
+
+  const images =
+    item.imageInfo || [];
+
+
+  for (const image of images) {
+
+    if (
+      image &&
+      image.type === "portrait" &&
+      image.url
+    ) {
+      return image.url.startsWith("http")
+        ? image.url
+        : `https://isa-1.mxplay.com/${image.url}`;
+    }
+  }
+
+
+  for (const image of images) {
+
+    if (image && image.url) {
+
+      return image.url.startsWith("http")
+        ? image.url
+        : `https://isa-1.mxplay.com/${image.url}`;
+    }
+  }
+
+
+  return undefined;
+}
+
+
+function movieToMeta(item) {
+
+  return {
+
+    id: `mx:${item.id}`,
+
+    type: "movie",
+
+    name:
+      item.title ||
+      item.display_title ||
+      "MX Player Movie",
+
+    poster:
+      imageFromItem(item),
+
+    posterShape: "poster",
+
+    description:
+      item.description || undefined,
+
+    releaseInfo:
+      item.releaseDate
+        ? String(item.releaseDate).slice(0, 4)
+        : undefined,
+
+    genres:
+      Array.isArray(item.genres)
+        ? item.genres.map(g =>
+            typeof g === "string"
+              ? g
+              : g.name
+          ).filter(Boolean)
+        : undefined
+
+  };
+}
+
+
+function collectMovies(value, output) {
+
+  if (!value) {
+    return;
+  }
+
+
+  if (Array.isArray(value)) {
+
+    for (const item of value) {
+      collectMovies(item, output);
+    }
+
+    return;
+  }
+
+
   if (
-    !hash
+    typeof value !== "object"
   ) {
+    return;
+  }
+
+
+  if (
+    value.type === "movie" &&
+    value.id
+  ) {
+
+    output.push(value);
+  }
+
+
+  for (
+    const child of Object.values(value)
+  ) {
+
+    if (
+      child &&
+      typeof child === "object"
+    ) {
+
+      collectMovies(
+        child,
+        output
+      );
+    }
+  }
+}
+
+
+async function getMovieCatalog(search = "") {
+
+  const now = Date.now();
+
+
+  if (
+    !search &&
+    movieCatalogCache &&
+    now - movieCatalogCacheTime <
+      MOVIE_CACHE_TIME
+  ) {
+
+    return movieCatalogCache;
+  }
+
+
+  let source;
+
+
+  if (search) {
+
+    // MX Player search endpoint.
+    const url =
+      new URL(
+        `${MX_API}/search/resultv2`
+      );
+
+
+    const params = {
+      "device-density": "2",
+      platform: "com.mxplay.desktop",
+      "content-languages": "hi,en",
+      "kids-mode-enabled": "false",
+      userid: MX_USER_ID,
+      query: search
+    };
+
+
+    for (
+      const [key, value]
+      of Object.entries(params)
+    ) {
+
+      url.searchParams.set(
+        key,
+        value
+      );
+    }
+
+
+    const response =
+      await fetch(
+        url,
+        {
+          method: "POST",
+          headers: {
+            ...MX_HEADERS,
+            "Content-Type":
+              "application/json"
+          }
+        }
+      );
+
+
+    if (!response.ok) {
+      return [];
+    }
+
+
+    source =
+      await response.json();
+
+  } else {
+
+    // MX Player home/browse.
+    source =
+      await mxRequest(
+        "/home/tab/87c3ddc974dcf12294e9412bec44b097",
+        {
+          pageSize: "50"
+        }
+      );
+  }
+
+
+  const movies = [];
+
+
+  collectMovies(
+    source,
+    movies
+  );
+
+
+  const unique =
+    uniqueBy(
+      movies,
+      movie => movie.id
+    );
+
+
+  const metas =
+    unique.map(movieToMeta);
+
+
+  if (!search) {
+
+    movieCatalogCache =
+      metas;
+
+    movieCatalogCacheTime =
+      Date.now();
+  }
+
+
+  return metas;
+}
+
+
+// ============================================================
+// MANIFEST
+// ============================================================
+
+const manifest = {
+
+  id: "com.minecraft.mxplayer",
+
+  version: VERSION,
+
+  name: "MX Player Free",
+
+  description:
+    "Free MX Player India streams with quality selection and audio.",
+
+
+  resources: [
+
+    {
+      name: "catalog",
+      types: ["movie"]
+    },
+
+    {
+      name: "meta",
+      types: ["movie"],
+      idPrefixes: ["mx:"]
+    },
+
+    {
+      name: "stream",
+      types: ["series"],
+      idPrefixes: ["tt"]
+    },
+
+    {
+      name: "stream",
+      types: ["movie"],
+      idPrefixes: ["mx:", "tt"]
+    }
+
+  ],
+
+
+  types: [
+    "movie",
+    "series"
+  ],
+
+
+  catalogs: [
+
+    {
+      type: "movie",
+
+      id: "mxmovies",
+
+      name:
+        "MX Player Free Movies",
+
+      extra: [
+
+        {
+          name: "search",
+          isRequired: false
+        },
+
+        {
+          name: "skip",
+          isRequired: false
+        }
+
+      ]
+
+    }
+
+  ]
+
+};
+
+
+// ============================================================
+// CORS
+// ============================================================
+
+app.use(
+  (req, res, next) => {
+
+    res.header(
+      "Access-Control-Allow-Origin",
+      "*"
+    );
+
+    res.header(
+      "Access-Control-Allow-Headers",
+      "*"
+    );
+
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET, OPTIONS"
+    );
+
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+
+    next();
+  }
+);
+
+
+// ============================================================
+// ROOT
+// ============================================================
+
+app.get("/", (req, res) => {
+
+  res.json({
+    addon: "MX Player Free",
+    version: VERSION,
+    status: "ok"
+  });
+
+});
+
+
+// ============================================================
+// HEALTH
+// ============================================================
+
+app.get("/health", (req, res) => {
+
+  res.json({
+
+    status: "ok",
+
+    version: VERSION,
+
+    addon:
+      "MX Player Free",
+
+    features: [
+
+      "MX Player episode resolver",
+
+      "multiple qualities",
+
+      "audio",
+
+      "MX Player free movie catalog"
+
+    ]
+
+  });
+
+});
+
+
+// ============================================================
+// MANIFEST
+// ============================================================
+
+app.get(
+  "/manifest.json",
+  (req, res) => {
+
+    res.json(manifest);
+
+  }
+);
+
+
+// ============================================================
+// CATALOG
+// ============================================================
+
+app.get(
+  "/catalog/:type/:id.json",
+  async (req, res) => {
 
     try {
 
-      const detail =
-        await mxDetail(
-          episode.id
+      const {
+        type,
+        id
+      } = req.params;
+
+
+      if (
+        type !== "movie" ||
+        id !== "mxmovies"
+      ) {
+
+        return res.json({
+          metas: []
+        });
+      }
+
+
+      const search =
+        req.query.search ||
+        "";
+
+
+      let metas =
+        await getMovieCatalog(
+          search
         );
 
 
-      const detailStreams =
-        extractHlsUrls(
-          detail
+      const skip =
+        Number(
+          req.query.skip || 0
         );
 
 
-      hash =
-        extractHash(
-          detailStreams
+      metas =
+        metas.slice(
+          skip,
+          skip + 100
         );
+
+
+      res.json({
+        metas
+      });
+
 
     } catch (error) {
 
-      console.log(
-        "DETAIL ERROR:",
-        error.message
+      console.error(
+        "Catalog error:",
+        error
       );
+
+      res.json({
+        metas: []
+      });
 
     }
 
   }
-
-
-  if (!hash) {
-
-    return null;
-
-  }
-
-
-  return {
-
-    title:
-      episode.title ||
-      `Episode ${episodeNumber}`,
-
-    hash,
-
-    episodeId:
-      episode.id,
-
-    page:
-      episode.page,
-
-    discovered:
-      streams
-
-  };
-
-}
+);
 
 
 // ============================================================
-// RESOLVE EPISODE
+// META FOR MX MOVIES
 // ============================================================
 
-async function resolveEpisode(
-  videoId
-) {
+app.get(
+  "/meta/movie/:id.json",
+  async (req, res) => {
 
-  // ----------------------------------------------------------
-  // KNOWN
-  // ----------------------------------------------------------
+    try {
 
-  if (
-    KNOWN_EPISODES[videoId]
-  ) {
-
-    return {
-
-      ...KNOWN_EPISODES[videoId],
-
-      method:
-        "known"
-
-    };
-
-  }
+      let id =
+        req.params.id;
 
 
-  // ----------------------------------------------------------
-  // AUTOMATIC
-  // ----------------------------------------------------------
-
-  return await resolveAutomatic(
-    videoId
-  );
-
-}
+      if (id.startsWith("mx:")) {
+        id = id.substring(3);
+      }
 
 
-// ============================================================
-// BUILD STREAMS
-// ============================================================
-
-async function buildStreams(
-  resolved,
-  videoId
-) {
-
-  let videoUrls = [];
+      const detail =
+        await getMovieDetail(id);
 
 
-  // ----------------------------------------------------------
-  // Known episode
-  // ----------------------------------------------------------
+      if (
+        !detail ||
+        !detail.id
+      ) {
 
-  if (
-    resolved.knownVideos
-  ) {
+        return res.json({
+          meta: null
+        });
+      }
 
-    videoUrls =
-      await discoverKnownVideos(
-        resolved
+
+      const imageInfo =
+        detail.imageInfo || [];
+
+
+      let poster;
+
+
+      for (
+        const image
+        of imageInfo
+      ) {
+
+        if (
+          image &&
+          image.type === "portrait" &&
+          image.url
+        ) {
+
+          poster =
+            image.url.startsWith("http")
+              ? image.url
+              : `https://isa-1.mxplay.com/${image.url}`;
+
+          break;
+        }
+      }
+
+
+      if (!poster && imageInfo[0]) {
+
+        poster =
+          imageInfo[0].url;
+
+        if (
+          poster &&
+          !poster.startsWith("http")
+        ) {
+
+          poster =
+            `https://isa-1.mxplay.com/${poster}`;
+        }
+      }
+
+
+      res.json({
+
+        meta: {
+
+          id: `mx:${id}`,
+
+          type: "movie",
+
+          name:
+            detail.title ||
+            "MX Player Movie",
+
+          poster,
+
+          posterShape:
+            "poster",
+
+          description:
+            detail.description,
+
+          releaseInfo:
+            detail.releaseDate
+              ? String(
+                  detail.releaseDate
+                ).slice(0, 4)
+              : undefined,
+
+          genres:
+            Array.isArray(
+              detail.genres
+            )
+              ? detail.genres
+                  .map(g =>
+                    typeof g === "string"
+                      ? g
+                      : g.name
+                  )
+                  .filter(Boolean)
+              : undefined
+
+        }
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "Meta error:",
+        error
       );
 
-  }
-
-
-  // ----------------------------------------------------------
-  // Page/API discovered URLs
-  // ----------------------------------------------------------
-
-  const discovered =
-    resolved.discovered || [];
-
-
-  if (
-    resolved.page
-  ) {
-
-    discovered.push(
-      ...(await pageStreams(
-        resolved.page
-      ))
-    );
-
-  }
-
-
-  for (
-    const url of discovered
-  ) {
-
-    if (
-      /\.m3u8/i.test(url) &&
-      !/audio[_-]/i.test(url) &&
-      !/subtitle[_-]/i.test(url)
-    ) {
-
-      videoUrls.push(
-        url
-      );
+      res.json({
+        meta: null
+      });
 
     }
 
   }
-
-
-  videoUrls = [
-    ...new Set(
-      videoUrls
-    )
-  ];
-
-
-  // ----------------------------------------------------------
-  // Audio
-  // ----------------------------------------------------------
-
-  const audio =
-    await findAudio(
-      resolved.hash,
-      discovered
-    );
-
-
-  console.log(
-    "VIDEO URLS:",
-    videoUrls
-  );
-
-
-  console.log(
-    "AUDIO:",
-    audio
-  );
-
-
-  // ----------------------------------------------------------
-  // Create streams
-  // ----------------------------------------------------------
-
-  const streams = [];
-
-
-  for (
-    const videoUrl of videoUrls
-  ) {
-
-    const q =
-      quality(
-        videoUrl
-      );
-
-
-    const master =
-      `${ADDON_BASE}/hls/master?` +
-      `video=${encodeURIComponent(videoUrl)}` +
-      `&audio=${encodeURIComponent(audio || "")}`;
-
-
-    streams.push({
-
-      name:
-        `MX Player ${q.label}`,
-
-      title:
-        `MX Player • ${q.label}` +
-        (
-          audio
-            ? " • Audio"
-            : ""
-        ),
-
-      url:
-        master,
-
-      behaviorHints: {
-
-        notWebReady:
-          true,
-
-        bingeGroup:
-          `mxplayer-${q.label}`
-
-      },
-
-      _quality:
-        q.value
-
-    });
-
-  }
-
-
-  // Highest first
-  streams.sort(
-    (a, b) =>
-      b._quality -
-      a._quality
-  );
-
-
-  // Remove duplicate qualities
-  const unique = [];
-
-  const seen =
-    new Set();
-
-
-  for (
-    const stream of streams
-  ) {
-
-    if (
-      seen.has(
-        stream.name
-      )
-    ) {
-
-      continue;
-
-    }
-
-
-    seen.add(
-      stream.name
-    );
-
-
-    delete stream._quality;
-
-    unique.push(
-      stream
-    );
-
-  }
-
-
-  return {
-
-    streams:
-      unique,
-
-    audio,
-
-    videoUrls,
-
-    hash:
-      resolved.hash
-
-  };
-
-}
+);
 
 
 // ============================================================
@@ -1305,60 +1424,61 @@ app.get(
     const audio =
       req.query.audio;
 
-
     if (!video) {
 
       return res
         .status(400)
-        .type("text")
-        .send(
-          "Missing video"
-        );
+        .send("Missing video");
 
     }
 
 
-    let playlist =
-`#EXTM3U
-#EXT-X-VERSION:3
-`;
+    const label =
+      req.query.label ||
+      "High";
 
 
-    if (audio) {
+    const audioUrl =
+      audio || null;
 
-      playlist +=
-`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="MX Audio",DEFAULT=YES,AUTOSELECT=YES,URI="${audio}"
-`;
+
+    const lines = [
+
+      "#EXTM3U",
+
+      "#EXT-X-VERSION:3"
+
+    ];
+
+
+    if (audioUrl) {
+
+      lines.push(
+        `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="MX Audio",DEFAULT=YES,AUTOSELECT=YES,URI="${audioUrl}"`
+      );
 
     }
 
 
-    const match =
-      video.match(
-        /_(\d+)k\.m3u8/i
+    const bandwidth =
+      qualityBandwidth(
+        label
       );
 
 
-    let bandwidth =
-      match
-        ? Number(match[1]) * 1000
-        : 1000000;
+    const audioAttribute =
+      audioUrl
+        ? ',AUDIO="audio"'
+        : "";
 
 
-    if (
-      !bandwidth
-    ) {
+    lines.push(
 
-      bandwidth =
-        1000000;
+      `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},CODECS="avc1.640028,mp4a.40.2"${audioAttribute}`,
 
-    }
+      video
 
-
-    playlist +=
-`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth}${audio ? ',AUDIO="audio"' : ""}
-${video}
-`;
+    );
 
 
     res.setHeader(
@@ -1368,19 +1488,14 @@ ${video}
 
 
     res.setHeader(
-      "Access-Control-Allow-Origin",
-      "*"
-    );
-
-
-    res.setHeader(
       "Cache-Control",
-      "public,max-age=60"
+      "no-cache"
     );
 
 
     res.send(
-      playlist
+      lines.join("\n") +
+      "\n"
     );
 
   }
@@ -1388,289 +1503,226 @@ ${video}
 
 
 // ============================================================
-// MANIFEST
-// ============================================================
-
-app.get(
-  "/manifest.json",
-  (req, res) => {
-
-    res.json({
-
-      id:
-        "com.my.stremio.video",
-
-      version:
-        "11.0.0",
-
-      name:
-        "MX Player Resolver",
-
-      description:
-        "MX Player HLS resolver with separate quality streams.",
-
-      resources: [
-
-        {
-          name:
-            "stream",
-
-          types: [
-            "movie",
-            "series"
-          ],
-
-          idPrefixes: [
-            "tt"
-          ]
-
-        }
-
-      ],
-
-      types: [
-        "movie",
-        "series"
-      ],
-
-      catalogs: []
-
-    });
-
-  }
-);
-
-
-// ============================================================
-// STREAM
+// STREAM RESOLVER
 // ============================================================
 
 app.get(
   "/stream/:type/:videoId.json",
   async (req, res) => {
 
-    const type =
-      req.params.type;
-
-
-    const videoId =
-      decodeURIComponent(
-        req.params.videoId
-      );
-
-
-    console.log(
-      "================================================"
-    );
-
-
-    console.log(
-      "STREAM REQUEST:",
+    const {
       type,
       videoId
+    } = req.params;
+
+
+    console.log(
+      `STREAM ${type} ${videoId}`
     );
 
 
     try {
 
-      const resolved =
-        await resolveEpisode(
-          videoId
-        );
+      // --------------------------------------------------------
+      // MOVIE: mx:<id>
+      // --------------------------------------------------------
+
+      if (
+        type === "movie" &&
+        videoId.startsWith("mx:")
+      ) {
+
+        const movieId =
+          videoId.substring(3);
 
 
-      if (!resolved) {
+        const detail =
+          await getMovieDetail(
+            movieId
+          );
 
-        console.log(
-          "RESOLUTION FAILED"
-        );
+
+        const hls =
+          extractHls(
+            detail.stream
+          );
+
+
+        if (!hls) {
+
+          return res.json({
+            streams: []
+          });
+        }
+
+
+        const streams =
+          await buildQualityStreams({
+            hls,
+            title:
+              detail.title ||
+              "MX Player Movie"
+          });
 
 
         return res.json({
-          streams: []
+          streams
         });
 
       }
 
 
-      console.log(
-        "RESOLVED:",
-        resolved
-      );
+      // --------------------------------------------------------
+      // SERIES: KNOWN WORKING EPISODES
+      // --------------------------------------------------------
+
+      const known =
+        KNOWN_EPISODES[
+          videoId
+        ];
 
 
-      const result =
-        await buildStreams(
-          resolved,
+      if (known) {
+
+        const base =
+          `${CDN_BASE}/video/${known.hash}/3/hls/`;
+
+
+        const audio =
+          await findAudio(base);
+
+
+        const qualities =
+          await probeQualities(
+            base,
+            known.knownVideos
+          );
+
+
+        const streams = [];
+
+
+        for (
+          const quality
+          of qualities
+        ) {
+
+          const masterUrl =
+            `${ADDON_BASE}/hls/master` +
+            `?video=${encodeURIComponent(quality.url)}` +
+            `&audio=${encodeURIComponent(audio || "")}` +
+            `&label=${encodeURIComponent(quality.label)}`;
+
+
+          streams.push({
+
+            name:
+              `MX Player ${quality.label}`,
+
+            title:
+              `MX Player • ${quality.label}` +
+              `${audio ? " • Audio" : ""}`,
+
+            url:
+              masterUrl,
+
+            behaviorHints: {
+
+              notWebReady: true,
+
+              bingeGroup:
+                `mxplayer-${quality.label}`
+
+            }
+
+          });
+
+        }
+
+
+        return res.json({
+          streams
+        });
+
+      }
+
+
+      // --------------------------------------------------------
+      // REQUESTED E3/E4/E5
+      // --------------------------------------------------------
+
+      const requested =
+        await resolveRequestedEpisode(
           videoId
         );
 
 
-      console.log(
-        "RETURNING STREAMS:",
-        result.streams
-      );
+      if (!requested) {
+
+        return res.json({
+          streams: []
+        });
+      }
 
 
-      res.json({
+      const detail =
+        await getEpisodeDetail(
+          requested.id
+        );
 
-        streams:
-          result.streams
 
+      if (
+        !detail ||
+        detail.statusCode &&
+        detail.statusCode !== 1001
+      ) {
+
+        return res.json({
+          streams: []
+        });
+      }
+
+
+      const hls =
+        extractHls(
+          detail.stream
+        );
+
+
+      if (!hls) {
+
+        return res.json({
+          streams: []
+        });
+      }
+
+
+      const streams =
+        await buildQualityStreams({
+          hls,
+          title:
+            requested.title
+        });
+
+
+      return res.json({
+        streams
       });
 
 
     } catch (error) {
 
       console.error(
-        "STREAM ERROR:",
+        "Stream resolver error:",
         error
       );
 
 
-      res.json({
-
+      return res.json({
         streams: []
-
       });
 
     }
-
-  }
-);
-
-
-// ============================================================
-// DEBUG
-// ============================================================
-
-app.get(
-  "/debug/resolve/:videoId",
-  async (req, res) => {
-
-    const videoId =
-      decodeURIComponent(
-        req.params.videoId
-      );
-
-
-    try {
-
-      const resolved =
-        await resolveEpisode(
-          videoId
-        );
-
-
-      if (!resolved) {
-
-        return res.json({
-
-          success:
-            false,
-
-          videoId,
-
-          error:
-            "Resolution failed"
-
-        });
-
-      }
-
-
-      const result =
-        await buildStreams(
-          resolved,
-          videoId
-        );
-
-
-      res.json({
-
-        success:
-          true,
-
-        videoId,
-
-        resolved,
-
-        result
-
-      });
-
-
-    } catch (error) {
-
-      res.status(500).json({
-
-        success:
-          false,
-
-        videoId,
-
-        error:
-          error.message
-
-      });
-
-    }
-
-  }
-);
-
-
-// ============================================================
-// HEALTH
-// ============================================================
-
-app.get(
-  "/health",
-  (req, res) => {
-
-    res.json({
-
-      ok:
-        true,
-
-      version:
-        "11.0.0",
-
-      service:
-        "MX Player Resolver"
-
-    });
-
-  }
-);
-
-
-// ============================================================
-// ROOT
-// ============================================================
-
-app.get(
-  "/",
-  (req, res) => {
-
-    res.json({
-
-      name:
-        "MX Player Resolver",
-
-      version:
-        "11.0.0",
-
-      status:
-        "running",
-
-      manifest:
-        "/manifest.json",
-
-      health:
-        "/health"
-
-    });
 
   }
 );
@@ -1686,7 +1738,7 @@ app.listen(
   () => {
 
     console.log(
-      `MX Player Resolver V11 running on ${HOST}:${PORT}`
+      `MX Player addon ${VERSION} listening on ${HOST}:${PORT}`
     );
 
   }
