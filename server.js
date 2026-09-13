@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Public URL used by Stremio for deployed HLS wrapper endpoints.
-// Render automatically provides RENDER_EXTERNAL_URL.
+// Render provides RENDER_EXTERNAL_URL automatically.
 const PUBLIC_URL =
   process.env.RENDER_EXTERNAL_URL ||
   `http://127.0.0.1:${PORT}`;
@@ -1106,7 +1106,6 @@ async function buildStreams(
         2
       )
     );
-
 
     console.log(
       "HLS VARIANTS:",
@@ -2667,7 +2666,7 @@ app.get(
   "/",
   (req, res) => {
     res.send(
-      "MX Player Resolver is running."
+      "MX Player Local Resolver is running."
     );
   }
 );
@@ -2682,7 +2681,7 @@ app.listen(
   "0.0.0.0",
   () => {
     console.log(
-      `MX Player Resolver running on port ${PORT}`
+      `MX Player Local Resolver running on http://127.0.0.1:${PORT}`
     );
   }
 );
